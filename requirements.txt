@@ -1,0 +1,1 @@
+protobuf==3.20.3 #ou será se é 3.12.4
