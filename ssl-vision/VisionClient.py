@@ -9,6 +9,8 @@ from proto import messages_robocup_ssl_wrapper_pb2
 import os
 import math
 
+#Esse funciona mto bem na visão
+
 class VisionClient(threading.Thread):
     def __init__(self, config_file=None):
         super().__init__()
