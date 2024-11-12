@@ -354,15 +354,15 @@ class Vision(threading.Thread):
 
         # Print geometry data
         print("-[Geometry Data]-------")
-        print(f"Field Dimensions: {int(geometry['fieldLength']*1000)}")
+        print(f"Field Dimensions: {int(geometry['fieldLength'] * 1000)}")
         print("-[Geometry Data]-------")
         print(
-            f"Field Dimensions: {int(geometry['fieldLength']*1000)}x{int(geometry['fieldWidth']*1000)} mm"
+            f"Field Dimensions: {int(geometry['fieldLength'] * 1000)}x{int(geometry['fieldWidth'] * 1000)} mm"
         )
-        print(f"Goal Width: {int(geometry['goalWidth']*1000)} mm")
-        #print(
+        print(f"Goal Width: {int(geometry['goalWidth'] * 1000)} mm")
+        # print(
         #    f"Penalty Area: {int(geometry['penaltyAreaWidth']*1000)}x{int(geometry['penaltyAreaDepth']*1000)} mm"
-        #)
+        # )
 
 
 def main():
