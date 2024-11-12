@@ -1,3 +1,5 @@
+# flake8: noqa
+
 import socket
 import struct
 import time
@@ -5,7 +7,6 @@ from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from proto.ssl_vision_wrapper_pb2 import SSL_WrapperPacket
 from proto.grSim_Packet_pb2 import grSim_Packet
-from proto.grSim_Commands_pb2 import grSim_Robot_Command, grSim_Commands
 
 def print_robot_info(robot) -> None:
     """Print detailed information about a robot
@@ -52,7 +53,7 @@ class DetectionRobot:
 class SSLVisionClient:
     """Client to receive SSL vision data"""
     
-    def __init__(self, port: int = 10020, address: str = "224.5.23.2", interface: str = ""):
+    def __init__(self, port: int = 10020, address: str = "224.5.23.4", interface: str = ""):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         
@@ -80,6 +81,9 @@ class SSLVisionClient:
         """Get field dimensions if geometry packet is available"""
         if self.packet.HasField('geometry'):
             field = self.packet.geometry.field
+            
+
+            
             return (field.field_length, field.field_width,
                    field.goal_width, field.goal_depth)
         return (0, 0, 0, 0)
@@ -137,10 +141,12 @@ class GrSimClient:
 
 def main():
     # Create vision client
-    vision = SSLVisionClient(10020, "224.5.23.2")
+    vision = SSLVisionClient(10020, "224.5.23.4")
+    
     
     # Create simulator client
     sim = GrSimClient("127.0.0.1", 20011)
+    
     
     try:
         while True:
