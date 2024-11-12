@@ -1,6 +1,6 @@
 import json
 import time
-from new_client import Vision  # Assuming your Vision class is in vision.py
+from Vision import Vision
 
 
 def get_config(config_file=None):

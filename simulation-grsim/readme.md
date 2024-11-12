@@ -6,6 +6,19 @@ cd proto
 protoc --python_out=. *.proto
 ```
 
+If the import error such as: 
+
+```python
+import ssl_vision_detection_pb2 as ssl__vision__detection__pb2
+import ssl_vision_geometry_pb2 as ssl__vision__geometry__pb2
+```
+do
+```py
+from . import ssl_vision_detection_pb2 as ssl__vision__detection__pb2
+from . import ssl_vision_geometry_pb2 as ssl__vision__geometry__pb2
+```
+
+
 Protobuf files for a common simulation protocol for the Small Size League for easier exchange of different
 simulator implementations.
 
