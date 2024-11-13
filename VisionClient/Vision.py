@@ -5,7 +5,7 @@ import threading
 import math
 import time
 from google.protobuf.json_format import MessageToJson
-from proto import messages_robocup_ssl_wrapper_pb2
+from protocols.vision import messages_robocup_ssl_wrapper_pb2
 
 
 class Vision(threading.Thread):
@@ -304,6 +304,9 @@ class Vision(threading.Thread):
             print(
                 f"Total Latency (assuming synched system clock) {(t_now - t_capture) * 1000.0:7.3f}ms"
             )
+
+        print("Ball data:", last_frame["ball"])
+
 
         # Print ball data with more details
         if (

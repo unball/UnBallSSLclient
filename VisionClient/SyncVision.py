@@ -1,25 +1,18 @@
 import json
 import socket
 import struct
-import threading
 import math
 import time
 from google.protobuf.json_format import MessageToJson
-from proto.ssl_vision_wrapper_pb2 import SSL_WrapperPacket
+from protocols.vision import messages_robocup_ssl_wrapper_pb2
 
 
-class Vision(threading.Thread):
-    '''vision from sim'''
+class SyncVision:
+    """Synchronous version of the Vision class"""
+
     def __init__(self, game) -> None:
-        super(Vision, self).__init__()
-
-        self.game = game
-        self.config = self.game.config
-        self.daemon = True
-        self.running = False
-        self._fps = 60
+        self.config = game.config
         self.new_data = False
-        self.any_geometry = False
 
         # Initialize geometry data structure
         self.raw_geometry = {
@@ -55,30 +48,30 @@ class Vision(threading.Thread):
             },
         }
 
-        self.side_factor = 1
-        self.angle_factor = 0
+        self.side_factor = 1 if self.config["match"]["team_side"] == "left" else -1
+        self.angle_factor = (
+            0 if self.config["match"]["team_side"] == "left" else math.pi
+        )
         self.vision_port = self.config["network"]["vision_port"]
         self.host = self.config["network"]["multicast_ip"]
 
-    def run(self):
-        """Main thread loop to receive and process vision data"""
+        # Create and configure socket
         self.vision_sock = self._create_socket()
-        self._wait_to_connect()
 
-        self.running = True
-        while self.running:
-            env = SSL_WrapperPacket()
+    def receive(self) -> bool:
+        """Receive and process one vision packet"""
+        try:
             data = self.vision_sock.recv(2048)
+            env = messages_robocup_ssl_wrapper_pb2.SSL_WrapperPacket()
             env.ParseFromString(data)
             last_frame = json.loads(MessageToJson(env))
-            self.new_data = self.update_detection(last_frame)
-            self.new_geometry = self.update_geometry(last_frame)
-        self.stop()
 
-    def stop(self):
-        """Stop the vision thread"""
-        self.running = False
-        self.vision_sock.close()
+            self.new_data = self.update_detection(last_frame)
+            self.update_geometry(last_frame)
+            return True
+        except Exception as e:
+            print(f"Error receiving vision data: {e}")
+            return False
 
     def update_detection(self, last_frame):
         """Update detection data from new frame"""
@@ -89,11 +82,6 @@ class Vision(threading.Thread):
         t_capture = frame.get("tCapture")
         camera_id = frame.get("cameraId")
         self.update_camera_capture_number(camera_id, t_capture)
-
-        self.side_factor = 1 if self.config["match"]["team_side"] == "left" else -1
-        self.angle_factor = (
-            0 if self.config["match"]["team_side"] == "left" else math.pi
-        )
 
         # Update ball data
         balls = frame.get("balls", [])
@@ -118,23 +106,16 @@ class Vision(threading.Thread):
         if not frame:
             return False
 
-        self.any_geometry = True
         frame = frame.get("field")
 
         # Update field dimensions
         self.raw_geometry["fieldLength"] = frame.get("fieldLength") / 1000
         self.raw_geometry["fieldWidth"] = frame.get("fieldWidth") / 1000
         self.raw_geometry["goalWidth"] = frame.get("goalWidth") / 1000
-        self.raw_geometry["penaltyAreaDepth"] = (
-            frame.get("penaltyAreaDepth", 1000) / 1000
-        )
-        self.raw_geometry["penaltyAreaWidth"] = (
-            frame.get("penaltyAreaWidth", 2000) / 1000
-        )
 
         # Update field lines
         field_lines = frame.get("fieldLines", [])
-        if len(field_lines) >= 10:  # Ensure we have enough lines
+        if len(field_lines) >= 10:
             self.raw_geometry["fieldLines"].update(
                 {
                     "LeftGoalLine": {
@@ -175,7 +156,6 @@ class Vision(threading.Thread):
                     },
                 }
             )
-
         return True
 
     def update_camera_capture_number(self, camera_id, t_capture):
@@ -221,10 +201,6 @@ class Vision(threading.Thread):
         self.new_data = False
         return self.raw_detection
 
-    def _wait_to_connect(self):
-        """Wait for initial connection"""
-        self.vision_sock.recv(1024)
-
     def _create_socket(self):
         """Create and configure UDP socket"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -233,51 +209,6 @@ class Vision(threading.Thread):
         mreq = struct.pack("4sl", socket.inet_aton(self.host), socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         return sock
-
-    @staticmethod
-    def process_frame(raw_frame, field_size, team_side, last_frame=None, ball_lp=False):
-        """Process vision frame placing the origin at the right edge of the field relative to your defending goal
-
-        Args:
-            raw_frame: Raw frame data from vision system
-            field_size: Tuple of (width, height) of field in meters
-            team_side: 'left' or 'right' indicating team's side
-            last_frame: Previous frame data (optional)
-            ball_lp: Boolean to enable ball position low-pass filter
-
-        Returns:
-            Processed frame with normalized coordinates
-        """
-        if raw_frame.get("detection") is None:
-            return last_frame
-
-        frame = raw_frame.get("detection")
-        w, h = field_size
-
-        frame["ball"] = {}
-        if frame.get("balls"):
-            ball = frame["balls"][0]
-            frame["ball"]["x"] = (
-                -ball.get("x", 0) if team_side == "right" else ball.get("x", 0)
-            ) / 1000 + w / 2
-            frame["ball"]["y"] = (
-                -ball.get("y", 0) if team_side == "right" else ball.get("y", 0)
-            ) / 1000 + h / 2
-        else:
-            frame["ball"] = last_frame["ball"] if ball_lp else {"x": -1, "y": -1}
-
-        for color in ["Yellow", "Blue"]:
-            for robot in frame.get(f"robots{color}", []):
-                if team_side == "right":
-                    robot["x"] = -robot.get("x", 0)
-                    robot["y"] = -robot.get("y", 0)
-                    robot["orientation"] = robot.get("orientation", 0) + math.pi
-
-                robot["x"] = robot["x"] / 1000 + w / 2
-                robot["y"] = robot["y"] / 1000 + h / 2
-                robot["robotId"] = robot.get("robotId", 0)
-
-        return frame
 
     def print_formatted_vision_data(self):
         """Print vision data in formatted output"""
@@ -306,22 +237,13 @@ class Vision(threading.Thread):
                 f"Total Latency (assuming synched system clock) {(t_now - t_capture) * 1000.0:7.3f}ms"
             )
 
-        # Print ball data with more details
+        # Print ball data
         if (
             last_frame["ball"]["tCapture"] is not None
             and last_frame["ball"]["tCapture"] > 0
         ):
             ball = last_frame["ball"]
-            print(f"-Ball: POS=<{ball['x']:9.2f},{ball['y']:9.2f}> ", end="")
-            # Add normalized field coordinates if available
-            field_w = geometry["fieldLength"]
-            field_h = geometry["fieldWidth"]
-            if field_w > 0 and field_h > 0:
-                norm_x = (ball["x"] - field_w / 2) * 1000  # Convert back to mm
-                norm_y = (ball["y"] - field_h / 2) * 1000  # Convert back to mm
-                print(f"FIELD=<{norm_x:9.2f},{norm_y:9.2f}>")
-            else:
-                print("")
+            print(f"-Ball: POS=<{ball['x']:9.2f},{ball['y']:9.2f}>")
 
         # Print blue robots
         blue_robots = [
@@ -353,50 +275,27 @@ class Vision(threading.Thread):
             else:
                 print("ANGLE=N/A")
 
-        # Print geometry data
-        print("-[Geometry Data]-------")
-        print(f"Field Dimensions: {int(geometry['fieldLength'] * 1000)}")
-        print("-[Geometry Data]-------")
-        print(
-            f"Field Dimensions: {int(geometry['fieldLength'] * 1000)}x{int(geometry['fieldWidth'] * 1000)} mm"
-        )
-        print(f"Goal Width: {int(geometry['goalWidth'] * 1000)} mm")
-        # print(
-        #    f"Penalty Area: {int(geometry['penaltyAreaWidth']*1000)}x{int(geometry['penaltyAreaDepth']*1000)} mm"
-        # )
-
 
 def main():
-    # Create test environment
-    class ip_configs:
+    # Create test config
+    class Config:
         def __init__(self):
             self.config = {
                 "network": {"vision_port": 10006, "multicast_ip": "224.5.23.2"},
                 "match": {"team_side": "left"},
             }
 
-    # Create and start vision client
+    # Create vision client
+    vision = SyncVision(Config())
 
-    ipsss = ip_configs()
-    vision_client = Vision(ipsss)
+    try:
+        while True:
+            if vision.receive():
+                vision.print_formatted_vision_data()
+            time.sleep(0.016)  # ~60Hz update rate
 
-    vision_client.start()
-
-    # Wait for data
-    time.sleep(1)
-
-    # Print formatted data
-
-    # formatacao bonita
-    vision_client.print_formatted_vision_data()
-
-    # json feio
-    print("Last Frame:", vision_client.get_last_frame())
-    print("Geometry:", vision_client.get_geometry())
-
-    # Cleanup
-    vision_client.stop()
-    vision_client.join()
+    except KeyboardInterrupt:
+        print("Shutting down...")
 
 
 if __name__ == "__main__":
