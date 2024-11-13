@@ -68,7 +68,7 @@ def main():
         while True:
             # Get latest frame data
             frame = vision.get_last_frame()
-            
+
             # Print vision data
             vision.print_formatted_vision_data()
 

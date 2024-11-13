@@ -307,7 +307,6 @@ class Vision(threading.Thread):
 
         print("Ball data:", last_frame["ball"])
 
-
         # Print ball data with more details
         if (
             last_frame["ball"]["tCapture"] is not None

@@ -11,9 +11,9 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
-import ssl_gc_common_pb2 as ssl__gc__common__pb2
-import ssl_simulation_config_pb2 as ssl__simulation__config__pb2
-import ssl_simulation_error_pb2 as ssl__simulation__error__pb2
+from . import ssl_gc_common_pb2 as ssl__gc__common__pb2
+from . import ssl_simulation_config_pb2 as ssl__simulation__config__pb2
+from . import ssl_simulation_error_pb2 as ssl__simulation__error__pb2
 
 
 DESCRIPTOR = _descriptor.FileDescriptor(
