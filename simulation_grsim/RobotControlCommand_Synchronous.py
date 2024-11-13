@@ -1,6 +1,6 @@
 import time
 import socket
-from VisionClient.SyncVision import SyncVision  # Note: adjust import path as needed
+from VisionClient.SyncVision import SyncVision
 from protocols.grsim.grSim_Packet_pb2 import grSim_Packet
 
 

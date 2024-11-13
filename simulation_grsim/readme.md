@@ -2,7 +2,7 @@ This is all [from](https://github.com/RoboCup-SSL/ssl-simulation-protocol)
 
 ## To compile proto files
 ```sh
-cd proto
+cd protocols/grsim
 protoc --python_out=. *.proto
 ```
 
@@ -24,13 +24,13 @@ simulator implementations.
 
 It consists of the following files:
 
-* [ssl_simulation_robot_control](./proto/ssl_simulation_robot_control.proto) - Control the robots
-* [ssl_simulation_robot_feedback](./proto/ssl_simulation_robot_feedback.proto) - Receive robot feedback
-* [ssl_simulation_control](./proto/ssl_simulation_control.proto) - Control the simulation itself
-* [ssl_simulation_config](./proto/ssl_simulation_config.proto) - Change the configuration of the simulator
-* [ssl_simulation_error](./proto/ssl_simulation_error.proto) - Error messages for responses
-* [ssl_gc_common](./proto/ssl_gc_common.proto) - Common types from game-controller (RobotId) 
-* [ssl_geometry](./proto/ssl_vision_geometry.proto) - Geometry from ssl-vision
+* [ssl_simulation_robot_control](../protocols/grsim/ssl_simulation_robot_control.proto) - Control the robots
+* [ssl_simulation_robot_feedback](../protocols/grsim/ssl_simulation_robot_feedback.proto) - Receive robot feedback
+* [ssl_simulation_control](../protocols/grsim/ssl_simulation_control.proto) - Control the simulation itself
+* [ssl_simulation_config](../protocols/grsim/ssl_simulation_config.proto) - Change the configuration of the simulator
+* [ssl_simulation_error](../protocols/grsim/ssl_simulation_error.proto) - Error messages for responses
+* [ssl_gc_common](../protocols/grsim/ssl_gc_common.proto) - Common types from game-controller (RobotId) 
+* [ssl_geometry](../protocols/grsim/ssl_vision_geometry.proto) - Geometry from ssl-vision
 
 The protocol defines mostly optional fields. All unset variables should be interpreted as unmodified.
 A simulator may decide to not implement all features. Returning an error in case a field is set that is not
@@ -45,22 +45,22 @@ There are three ports that a simulator should offer:
 ### Simulation Control
 Control and configure the simulation.
 
-* Accepts `SimulatorCommand` messages ([ssl_simulation_control](./proto/ssl_simulation_control.proto))
-* Returns `SimulatorResponse` messages ([ssl_simulation_control](./proto/ssl_simulation_control.proto))
+* Accepts `SimulatorCommand` messages ([ssl_simulation_control](../protocols/grsim/ssl_simulation_control.proto))
+* Returns `SimulatorResponse` messages ([ssl_simulation_control](../protocols/grsim/ssl_simulation_control.proto))
 * Default port: 10300 UDP
 
 ### Robot Control Blue
 Control the blue team.
 
-* Accepts `RobotControl` messages ([ssl_simulation_robot_control](./proto/ssl_simulation_robot_control.proto))
-* Returns `RobotControlResponse` messages ([ssl_simulation_robot_feedback](./proto/ssl_simulation_robot_feedback.proto))
+* Accepts `RobotControl` messages ([ssl_simulation_robot_control](../protocols/grsim/ssl_simulation_robot_control.proto))
+* Returns `RobotControlResponse` messages ([ssl_simulation_robot_feedback](../protocols/grsim/ssl_simulation_robot_feedback.proto))
 * Default port: 10301 UDP
 
 ### Robot Control Yellow
 Control the yellow team.
 
-* Accepts `RobotControl` messages ([ssl_simulation_robot_control](./proto/ssl_simulation_robot_control.proto))
-* Returns `RobotControlResponse` messages ([ssl_simulation_robot_feedback](./proto/ssl_simulation_robot_feedback.proto))
+* Accepts `RobotControl` messages ([ssl_simulation_robot_control](../protocols/grsim/ssl_simulation_robot_control.proto))
+* Returns `RobotControlResponse` messages ([ssl_simulation_robot_feedback](../protocols/grsim/ssl_simulation_robot_feedback.proto))
 * Default port: 10302 UDP
 
 All connections use bidirectional UDP communication.
@@ -79,7 +79,7 @@ Additionally, a multicast protocol might cause issues in these scenarios.
 There are also things like authentication for a tournament mode to be considered.
 
 For that, an additional communication interface is planned. There are multiple ideas:
-1. Use a bidirectional TCP connection, like the game-controller provides (messages a drafted in [ssl_simulation_synchronous.proto](./proto/ssl_simulation_synchronous.proto))
+1. Use a bidirectional TCP connection, like the game-controller provides (messages a drafted in [ssl_simulation_synchronous.proto](../protocols/grsim/ssl_simulation_synchronous.proto))
 1. Providing C-Interfaces to avoid network communication completely
 1. Using gRPC, esp. for configuration
 

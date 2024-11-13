@@ -8,7 +8,7 @@ The files are already compiled here, to recompile the `.proto` files inside the 
 Compile the `.proto` files:
 
 ```sh
-cd proto
+cd proto/vision
 protoc --python_out=. *.proto
 ```
 
