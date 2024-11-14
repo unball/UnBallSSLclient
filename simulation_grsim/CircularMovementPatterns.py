@@ -10,7 +10,7 @@ from protocols.grsim.ssl_simulation_robot_control_pb2 import (
     MoveLocalVelocity,
 )
 
-from simulation_grsim.RobotControlClient.py import RobotControlClient
+from simulation_grsim.RobotControlClient import RobotControlClient
 
 
 def circular_movement():

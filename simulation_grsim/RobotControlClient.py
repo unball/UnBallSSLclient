@@ -200,9 +200,9 @@ class RobotControlClient:
 
 
 def main():
-    
+
     debug = True
-    
+
     try:
         # Test clients
         blue_client = RobotControlClient(team_port=10301, debugger=debug)
@@ -223,7 +223,7 @@ def main():
             yellow_client.send_local_velocity(2, 0, -1, 0)
 
             # Print stats every 5 seconds
-            
+
             current_time = time.time()
             if current_time - last_stats_time >= 5:
                 print("\n[DEBUG] === 5 Second Statistics ===")
