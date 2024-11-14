@@ -10,8 +10,8 @@ The SSL Game Controller is used in the RoboCup Small Size League (SSL) to manage
 
 For more details, please visit the [SSL Game Controller Commands](https://github.com/RoboCup-SSL/ssl-game-controller/tree/master/cmd).
 
-## To compile proto files
+## To compile proto files, in root:
 ```sh
-cd proto
+cd prototols
 protoc --python_out=. *.proto
 ```

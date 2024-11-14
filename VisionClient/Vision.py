@@ -65,6 +65,7 @@ class Vision(threading.Thread):
         self._wait_to_connect()
 
         self.running = True
+        print("Threaded Vision system started successfully")
         while self.running:
             env = messages_robocup_ssl_wrapper_pb2.SSL_WrapperPacket()
             data = self.vision_sock.recv(2048)
