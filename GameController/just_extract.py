@@ -45,18 +45,11 @@ class RefereeCommunication:
             print("Erro ao decodificar a mensagem do árbitro.")
             return None
 
-    def handle_referee_command(self):
-        if self.referee_state:
-            self.field.update_game_state(self.referee_state)
-
 
 if __name__ == "__main__":
 
     referee_communication = RefereeCommunication()
 
-    while True:
-        referee_message = referee_communication.get_referee_message()
-        print(referee_message)
-        if referee_message:
-            referee_communication.handle_referee_command()
-        time.sleep(0.1)  # Pequena pausa para evitar uso excessivo de CPU
+    time.sleep(1)  # Pequena pausa para receber
+    referee_message = referee_communication.get_referee_message()
+    print(referee_message)

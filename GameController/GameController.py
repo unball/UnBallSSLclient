@@ -202,8 +202,7 @@ def main():
                 "network": {
                     "referee_port": 10003,
                     "multicast_ip": "224.5.23.1",
-                },
-                "match": {"team_side": "left"},
+                }
             }
 
     # Create and start game controller
@@ -214,7 +213,8 @@ def main():
     try:
         while True:
             state = game_controller.get_state()
-            print(state)
+            #print(state)
+            game_controller.print_formatted_referee_data()
             time.sleep(1)
     except KeyboardInterrupt:
         game_controller.stop()
