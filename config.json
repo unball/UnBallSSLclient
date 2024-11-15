@@ -1,7 +1,11 @@
 {
     "network" : {
         "multicast_ip": "224.5.23.2",
-        "vision_port": 10006
+        "vision_port": 10006,
+        "referee_ip": "224.5.23.1",
+        "referee_port": 10003,
+        "yellow_port": 10004,
+        "blue_port": 10005
     },
     "match" : {
         "team_1": "UnBall",

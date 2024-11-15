@@ -51,7 +51,7 @@ class GameController(threading.Thread):
         }
 
         self.referee_port = self.config["network"]["referee_port"]
-        self.host = self.config["network"]["multicast_ip"]
+        self.host = self.config["network"]["referee_ip"]
         self.referee_sock = None
 
     def run(self):
@@ -201,7 +201,7 @@ def main():
             self.config = {
                 "network": {
                     "referee_port": 10003,
-                    "multicast_ip": "224.5.23.1",
+                    "referee_ip": "224.5.23.1",
                 }
             }
 
@@ -213,8 +213,8 @@ def main():
     try:
         while True:
             state = game_controller.get_state()
-            #print(state)
-            game_controller.print_formatted_referee_data()
+            print(state)
+            #game_controller.print_formatted_referee_data()
             time.sleep(1)
     except KeyboardInterrupt:
         game_controller.stop()

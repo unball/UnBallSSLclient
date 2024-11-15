@@ -4,7 +4,7 @@ import struct
 import threading
 from google.protobuf.json_format import MessageToJson
 import time
-from protocols.gc.ssl_gc_referee_message_pb2 import Referee
+from protocols.GameController.ssl_gc_referee_message_pb2 import Referee
 
 
 class ThreadedGameController(threading.Thread):
