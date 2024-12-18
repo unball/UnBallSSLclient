@@ -1,4 +1,3 @@
-
 import time
 from protocols.GameController.ssl_gc_referee_message_pb2 import Referee
 import socket
@@ -107,20 +106,3 @@ class SyncGameController:
         mreq = struct.pack("4sl", socket.inet_aton(self.host), socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         return sock
-
-
-if __name__ == "__main__":
-
-    gc = SyncGameController()
-    gc.start()
-
-    try:
-        while True:
-            if gc.update():
-                state = gc.get_state()
-                print(f"Game state: {state}")
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("Shutting down...")
-    finally:
-        gc.stop()

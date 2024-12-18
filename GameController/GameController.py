@@ -3,9 +3,9 @@ import socket
 import struct
 import threading
 import time
+import os
 from google.protobuf.json_format import MessageToJson
 from protocols.GameController.ssl_gc_referee_message_pb2 import Referee
-
 
 class GameController(threading.Thread):
     def __init__(self, game) -> None:
@@ -212,11 +212,15 @@ def main():
 
     try:
         while True:
-            state = game_controller.get_state()
-            print(state)
-            #game_controller.print_formatted_referee_data()
+            # Clear screen for better readability
+            os.system("cls" if os.name == "nt" else "clear")
+
+            # Use the formatted print instead of raw state
+            game_controller.print_formatted_referee_data()
+
             time.sleep(1)
     except KeyboardInterrupt:
+        print("\nShutting down...")
         game_controller.stop()
 
 
