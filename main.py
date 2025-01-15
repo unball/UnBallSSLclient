@@ -1,10 +1,37 @@
+#!/usr/bin/env python3
+"""
+Sistema Cliente SSL para RoboCup - UnBall (Universidade de Brasília)
+"""
+
+import sys
+import warnings
+import os
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+os.environ["GTK_MODULES"] = ""
+
 import json
 import threading
 import time
-import os
+import math
+import signal
+import traceback
+from PyQt5 import QtWidgets, uic
+from PyQt5.QtWidgets import (
+    QMainWindow,
+    QApplication,
+    QVBoxLayout,
+)
+from PyQt5.QtCore import Qt, QTimer
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Project imports
+from PyQt.main_window import MainWindow
 from GameController.GameController import GameController
 from VisionClient.Vision import Vision
 from SimulationGrSim.RobotControlClient_threaded import ThreadedRobotControlClient
+from PyQt.field_visualization import FieldVisualization
 
 
 class Game:
@@ -17,8 +44,12 @@ class Game:
             "referee": False,
             "threads": False,
             "timing": False,
-            "all": False,  # Master debug flag
+            "all": False,
         }
+        self.current_command = None
+        self.command_thread = None
+
+        self.field_bounds = {"x_min": 0, "x_max": 0, "y_min": 0, "y_max": 0}
 
         print("Initializing Game...")
 
@@ -39,10 +70,15 @@ class Game:
         self.last_vision_data = None
         self.last_referee_data = None
 
+        # UI tracking
+        self.window = None
+        self.visualization_timer = None
+
     def start(self):
+        """Start all components"""
         print("Starting game systems...")
 
-        # Start robot control clients
+        # Start robot control
         self.blue_robots.start()
         self.yellow_robots.start()
         print("Robot control clients started")
@@ -58,13 +94,136 @@ class Game:
         self._update_thread.start()
         print("Main update loop started")
 
+    def check_bounds(self, x, y):
+        """Check if position is within field bounds"""
+        return (
+            self.field_bounds["x_min"] <= x <= self.field_bounds["x_max"]
+            and self.field_bounds["y_min"] <= y <= self.field_bounds["y_max"]
+        )
+
+    def update_field_bounds(self):
+        """Update field bounds from vision geometry"""
+        if self.vision and self.vision.raw_geometry:
+            field_length = self.vision.raw_geometry["fieldLength"]
+            field_width = self.vision.raw_geometry["fieldWidth"]
+
+            # Field dimensions are centered at 0,0
+            self.field_bounds = {
+                "x_min": -field_length / 2,
+                "x_max": field_length / 2,
+                "y_min": -field_width / 2,
+                "y_max": field_width / 2,
+            }
+            # print(f"Updated field bounds: {self.field_bounds}")  # Debug print
+
+    def set_game_controller_enabled(self, enabled):
+        """Enable/disable game controller"""
+        self.game_controller_enabled = enabled
+        print(f"Game controller {'enabled' if enabled else 'disabled'}")
+
+    def execute_movement(self):
+        """Continuous movement execution"""
+        while self.running and self.current_command:
+            try:
+                if self.current_command == "FORCE_START":
+                    # Triangle formation movement with boundary checking
+                    for i, (dx, dy) in enumerate(
+                        [
+                            (0.5, 0.5),  # Robot 0: diagonal right
+                            (-0.5, 0.5),  # Robot 1: diagonal left
+                            (0, -0.5),  # Robot 2: backward
+                        ]
+                    ):
+                        robot = self.blue_robots.get_position(i)
+                        new_x = robot["x"] + dx * 0.1  # Scale movement
+                        new_y = robot["y"] + dy * 0.1
+
+                        if self.check_bounds(new_x, new_y):
+                            self.blue_robots.send_global_velocity(i, dx, dy, 0)
+                        else:
+                            # Reverse direction if hitting boundary
+                            self.blue_robots.send_global_velocity(i, -dx, -dy, 0)
+
+                    # Similar for yellow team
+                    for i, dx in enumerate([-0.5, 0, 0.5]):
+                        robot = self.yellow_robots.get_position(i)
+                        new_x = robot["x"] + dx * 0.1
+
+                        if self.check_bounds(new_x, robot["y"]):
+                            self.yellow_robots.send_global_velocity(i, dx, 0, 0)
+                        else:
+                            self.yellow_robots.send_global_velocity(i, -dx, 0, 0)
+
+                elif self.current_command == "NORMAL_START":
+                    # Circular movement with boundary checking
+                    t = time.time()
+                    for i in range(3):
+                        radius = 0.5 + i * 0.2
+                        x = radius * math.cos(t)
+                        y = radius * math.sin(t)
+
+                        if self.check_bounds(x, y):
+                            self.blue_robots.send_global_velocity(i, x, y, math.pi / 2)
+                        else:
+                            # Reduce radius if hitting boundary
+                            self.blue_robots.send_global_velocity(
+                                i, x / 2, y / 2, math.pi / 2
+                            )
+
+                time.sleep(1.0 / self._fps)
+
+            except Exception as e:
+                print(f"Error in movement execution: {str(e)}")
+
+    def test_movement(self):
+        """Test random movements for robots"""
+        import random
+        import math
+
+        # Simple test patterns
+        def circle_position(robot_id, time, radius=1.0, frequency=0.5):
+            angle = time * frequency * 2 * math.pi
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+            return x, y, angle
+
+        def oscillate_position(robot_id, time, amplitude=1.0, frequency=0.5):
+            x = amplitude * math.sin(time * frequency * 2 * math.pi)
+            y = 0.5 * math.cos(time * frequency * 2 * math.pi)
+            return x, y, math.pi / 4
+
+        start_time = time.time()
+
+        while self.running:
+            try:
+                current_time = time.time() - start_time
+
+                # Move blue robots in a circle
+                for i in range(3):
+                    x, y, theta = circle_position(i, current_time, radius=1.0 + i * 0.2)
+                    self.blue_robots.send_global_velocity(i, x, y, theta)
+
+                # Move yellow robots in oscillation
+                for i in range(3):
+                    x, y, theta = oscillate_position(
+                        i, current_time, amplitude=1.0 + i * 0.2
+                    )
+                    self.yellow_robots.send_global_velocity(i, x, y, theta)
+
+                time.sleep(1.0 / self._fps)
+
+            except Exception as e:
+                print(f"Error in test movement: {str(e)}")
+
     def update_loop(self):
-        """Main update loop running at specified FPS"""
+        """Main game logic update loop"""
         while self.running:
             try:
                 # Update vision data if available
                 if self.vision.new_data:
                     self.last_vision_data = self.vision.get_last_frame()
+                    # Update field bounds when we get new geometry
+                    self.update_field_bounds()
 
                 # Update referee data independently
                 if self.referee.new_data or self.referee.any_referee:
@@ -75,14 +234,10 @@ class Game:
                     self.last_referee_data
                     and self.last_referee_data["command"] == "HALT"
                 ):
-                    # Stop all robots when halted
                     self.blue_robots.send_global_velocity(0, 0, 0, 0)
                     self.yellow_robots.send_global_velocity(0, 0, 0, 0)
-                elif (
-                    self.last_vision_data
-                ):  # Only control robots if we have vision data
-                    # Robot control logic here
-                    pass
+                elif self.last_vision_data:
+                    pass  # Robot control logic here
 
                 time.sleep(1.0 / self._fps)
 
@@ -106,6 +261,10 @@ class Game:
         if hasattr(self, "referee"):
             self.referee.stop()
 
+        # Stop visualization timer
+        if self.visualization_timer:
+            self.visualization_timer.stop()
+
         # Wait for update thread
         if self._update_thread and self._update_thread.is_alive():
             try:
@@ -122,6 +281,44 @@ class Game:
     def get_referee_data(self):
         """Get latest referee data"""
         return self.last_referee_data
+
+    def send_command(self, command):
+        """Send command to game controller and robots"""
+        if not self.running:
+            return
+
+        print(f"Executing command: {command}")
+
+        # Stop previous movement thread if exists
+        if self.command_thread and self.command_thread.is_alive():
+            self.current_command = None
+            self.command_thread.join()
+
+        if command == "HALT" or command == "STOP":
+            # Stop all robots
+            self.current_command = None
+            for i in range(3):
+                self.blue_robots.send_global_velocity(i, 0, 0, 0)
+                self.yellow_robots.send_global_velocity(i, 0, 0, 0)
+        else:
+            # Start new movement pattern
+            self.current_command = command
+            self.command_thread = threading.Thread(target=self.execute_movement)
+            self.command_thread.daemon = True
+            self.command_thread.start()
+
+    def stop(self):
+        """Stop all components"""
+        print("Stopping all systems...")
+        self.running = False
+        self.current_command = None  # Stop movement thread
+
+        # Stop existing threads
+        if self.command_thread and self.command_thread.is_alive():
+            try:
+                self.command_thread.join(timeout=1.0)
+            except Exception as e:
+                print(f"Error stopping command thread: {e}")
 
     def get_unball_data_vision(self):
         """Get vision data specific to UnBall team's robots"""
@@ -145,7 +342,7 @@ class Game:
                 "camera_id": data["cCapture"],
             }
             for robot_id, data in robot_data.items()
-            if data["x"] is not None  # Only include detected robots
+            if data["x"] is not None
         }
 
         return {
@@ -191,7 +388,6 @@ def get_config(config_file=None):
             with open("config.json", "r") as f:
                 config = json.load(f)
 
-        # Validate required fields
         required_fields = [
             ("network", "multicast_ip"),
             ("network", "vision_port"),
@@ -213,91 +409,42 @@ def get_config(config_file=None):
         raise ValueError("Invalid JSON in config file")
 
 
-if __name__ == "__main__":
-    game = None
-
-    # Set debug flags as needed
-    # game.debug["referee"] = False  # Enable only referee debugging
-    # game.debug["all"] = True    # Enable all debugging
-
-    # try:
-    # game.start()
-    # game.test_referee_connection()
-
-    # while True:
-    #     vision_data = game.get_vision_data()
-    #     referee_data = game.get_referee_data()
-
-    #     # First clear screen
-    #     os.system("cls" if os.name == "nt" else "clear")
-
-    #     # Then print all status info with a small delay to ensure visibility
-    #     print("\n=== Status Update ===")
-    #     time.sleep(0.1)  # Small delay to ensure print is visible
-
-    #     print(referee_data)
-
-    #     if vision_data:
-    #         ball_pos = vision_data["ball"]
-    #         print(
-    #             f"Ball position: x={ball_pos['x']:.2f}, " f"y={ball_pos['y']:.2f}"
-    #         )
-
-    #     if referee_data:
-    #         print(f"Referee command: {referee_data['command']}")
-    #         print(
-    #             f"Score - Blue: {referee_data['blue']['score']} "
-    #             f"Yellow: {referee_data['yellow']['score']}"
-    #         )
-    #     else:
-    #         print("No referee data available")
-
-    #     # Main loop delay
-    #     time.sleep(0.9)  # Combined with the 0.1s above makes 1 second total
-
+def main():
     try:
+        # Create Qt application
+        app = QApplication(sys.argv)
+
+        # Create and start game instance
         game = Game()
+
+        # Create and show main window
+        window = MainWindow(game)
+        window.show()
+
+        # Start game systems
         game.start()
 
-        while True:
-            vision_data = game.get_unball_data_vision()
-            referee_data = game.get_unball_data_referee()
-
-            os.system("cls" if os.name == "nt" else "clear")
-            print("\n=== Status Update ===")
-
-            if vision_data:
-                print("\n=== UnBall Vision Status ===")
-                print(f"Team Color: {vision_data['team_color']}")
-                print(f"Active Robots: {vision_data['total_robots']}")
-                print("\nRobot Positions:")
-                for robot_id, data in vision_data["robots"].items():
-                    pos = data["position"]
-                    print(
-                        f"Robot {robot_id}: x={pos['x']:.2f}, y={pos['y']:.2f}, θ={data['orientation']:.2f}"
-                    )
-
-                if vision_data["ball_position"]:
-                    ball = vision_data["ball_position"]
-                    print(f"\nBall Position: x={ball['x']:.2f}, y={ball['y']:.2f}")
-
-            if referee_data:
-                print("\n=== UnBall Team Status ===")
-                print(f"Playing as: {referee_data['side']}")
-                print(f"Score: {referee_data['score']}")
-                print(f"Red cards: {referee_data['red_cards']}")
-                print(f"Yellow cards: {referee_data['yellow_cards']}")
-                print(f"Timeouts remaining: {referee_data['timeouts']}")
-
-            time.sleep(0.1)
-
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-    except Exception as e:
-        print(f"Fatal error: {str(e)}")
-        import traceback
-
-        traceback.print_exc()
-    finally:
-        if game:
+        # Handle Ctrl+C gracefully
+        def signal_handler(sig, frame):
+            print("\nEncerrando sistemas...")
             game.stop()
+            app.quit()
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # Keep Qt responsive to Ctrl+C
+        timer = QTimer()
+        timer.timeout.connect(lambda: None)
+        timer.start(100)
+
+        sys.exit(app.exec_())
+
+    except Exception as e:
+        print(f"Erro fatal: {str(e)}")
+        traceback.print_exc()
+        if "game" in locals():
+            game.stop()
+
+
+if __name__ == "__main__":
+    main()

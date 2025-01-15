@@ -78,7 +78,9 @@ class Vision(threading.Thread):
     def stop(self):
         """Stop the vision thread"""
         self.running = False
-        self.vision_sock.close()
+        # Only close the socket if it exists
+        if hasattr(self, "vision_sock"):
+            self.vision_sock.close()
 
     def update_detection(self, last_frame):
         """Update detection data from new frame"""
@@ -111,6 +113,18 @@ class Vision(threading.Thread):
                 self.update_robot_detection(robot, t_capture, camera_id, color="Yellow")
 
         return True
+
+    def debug_field_bounds(self):
+        """Print debug information about field bounds"""
+        print("\nField Bounds Debug Info:")
+        print("Vision geometry:", self.vision.raw_geometry)
+        print("Current bounds:", self.field_bounds)
+        print("Field dimensions:")
+        print(f"Length: {self.vision.raw_geometry['fieldLength']}")
+        print(f"Width: {self.vision.raw_geometry['fieldWidth']}")
+        print("Field Lines:")
+        for line_name, line_data in self.vision.raw_geometry["fieldLines"].items():
+            print(f"{line_name}: {line_data}")
 
     def update_geometry(self, last_frame):
         """Update geometry data from new frame"""

@@ -20,3 +20,8 @@ then
 pip install -r requirements.txt
 pip install -e .
 ```
+
+qt things
+```bash
+sudo apt-get install qttools5-dev
+```
