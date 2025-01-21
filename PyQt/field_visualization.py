@@ -195,16 +195,13 @@ class FieldVisualization(QFrame):
             )
 
             # Draw defense areas
-            # Defense areas
-            defense_height = 1.35 * (
-                self.viz_width / dims["field_width"]
-            )  # Height along the y-axis
-            defense_width = 0.5 * (
-                self.viz_height / dims["field_height"]
-            )  # Width along the x-axis
-            defense_margin_y = (
-                self.viz_height - defense_height
-            ) / 2  # Centered vertically
+            defense_width = (dims["defense_height"] * self.viz_width) / dims[
+                "field_width"
+            ]  # Using height for width
+            defense_height = (dims["defense_width"] * self.viz_height) / dims[
+                "field_height"
+            ]  # Using width for height
+            defense_margin_y = (self.viz_height - defense_height) / 2
 
             # Left defense area
             self.scene.addRect(
