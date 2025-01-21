@@ -15,6 +15,14 @@ class FieldVisualization(QFrame):
         # Field margin for better appearance
         self.field_margin = 30  # pixels
 
+        # Initialize el_bounds
+        self.el_bounds = {
+            "x_min": -2.747,  # Minimum x coordinate
+            "x_max": 2.747,  # Maximum x coordinate
+            "y_min": -1.971,  # Minimum y coordinate
+            "y_max": 1.971,  # Maximum y coordinate
+        }
+
         # Make view more adaptive
         self.view.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
@@ -222,9 +230,28 @@ class FieldVisualization(QFrame):
 
     def update_robot(self, x, y, orientation, team_color, robot_id):
         """Update or add robot position"""
-        # Scale robot size based on field size
         robot_size = min(self.viz_width, self.viz_height) * 0.05
-        scaled_x, scaled_y = self.scale_coordinates(x, y)
+        scaled_x, scaled_y = self.scale_coordinates(
+            x, y, clamp=False
+        )  # Don't clamp robots
+
+        # Check if robot is within field boundaries
+        dims = self.divisions[self.current_division]
+
+        # Different bounds check based on division
+        if self.current_division == "Entry Level":
+            is_inside = (-dims["field_width"] / 2 <= x <= dims["field_width"] / 2) and (
+                -dims["field_height"] / 2 <= y <= dims["field_height"] / 2
+            )
+            # Check if robot is within our extended visualization bounds
+            is_visible = (self.el_bounds["x_min"] <= x <= self.el_bounds["x_max"]) and (
+                self.el_bounds["y_min"] <= y <= self.el_bounds["y_max"]
+            )
+        else:
+            is_inside = (-dims["field_width"] / 2 <= x <= dims["field_width"] / 2) and (
+                -dims["field_height"] / 2 <= y <= dims["field_height"] / 2
+            )
+            is_visible = True
 
         # Remove old robot graphics if they exist
         robot_items = self.blue_robots if team_color == Qt.blue else self.yellow_robots
@@ -234,52 +261,85 @@ class FieldVisualization(QFrame):
             self.scene.removeItem(old_line)
             self.scene.removeItem(old_text)
 
-        # Create new robot graphics
-        robot_rect = QRectF(
-            scaled_x - robot_size / 2, scaled_y - robot_size / 2, robot_size, robot_size
-        )
-        robot = self.scene.addEllipse(robot_rect, QPen(Qt.black), QBrush(team_color))
+        # Only create robot if it's within visible bounds
+        if is_visible:
+            # Create robot with opacity based on position
+            robot_rect = QRectF(
+                scaled_x - robot_size / 2,
+                scaled_y - robot_size / 2,
+                robot_size,
+                robot_size,
+            )
 
-        # Add direction indicator
-        line_length = robot_size / 2
-        end_x = scaled_x + line_length * math.cos(orientation)
-        end_y = scaled_y + line_length * math.sin(orientation)
-        line = self.scene.addLine(
-            QLineF(scaled_x, scaled_y, end_x, end_y), QPen(Qt.black, 2)
-        )
+            # Create robot with different appearance when outside field
+            robot = self.scene.addEllipse(robot_rect, QPen(Qt.black))
+            if is_inside:
+                robot.setBrush(QBrush(team_color))
+            else:
+                # Create a semi-transparent version of the team color for out-of-field robots
+                out_color = QColor(team_color)
+                out_color.setAlpha(128)  # 50% transparency
+                robot.setBrush(QBrush(out_color))
 
-        # Add ID text
-        text = self.scene.addText(str(robot_id))
-        text.setDefaultTextColor(Qt.black)
-        text.setPos(
-            scaled_x - text.boundingRect().width() / 2,
-            scaled_y - text.boundingRect().height() / 2,
-        )
+            # Add direction indicator
+            line_length = robot_size / 2
+            end_x = scaled_x + line_length * math.cos(orientation)
+            end_y = scaled_y + line_length * math.sin(orientation)
+            line = self.scene.addLine(
+                QLineF(scaled_x, scaled_y, end_x, end_y), QPen(Qt.black, 2)
+            )
 
-        # Store new robot items
-        robot_items[robot_id] = (robot, line, text)
+            # Add ID text
+            text = self.scene.addText(str(robot_id))
+            text.setDefaultTextColor(Qt.black)
+            text.setPos(
+                scaled_x - text.boundingRect().width() / 2,
+                scaled_y - text.boundingRect().height() / 2,
+            )
 
-        # Apply current visibility settings
-        visible = self.blue_visible if team_color == Qt.blue else self.yellow_visible
-        robot.setVisible(visible)
-        line.setVisible(visible)
-        text.setVisible(visible)
+            # Store new robot items
+            robot_items[robot_id] = (robot, line, text)
+
+            # Apply current visibility settings
+            visible = (
+                self.blue_visible if team_color == Qt.blue else self.yellow_visible
+            )
+            robot.setVisible(visible)
+            line.setVisible(visible)
+            text.setVisible(visible)
 
     def update_ball(self, x, y):
-        """Update ball position"""
-        # Scale ball size based on field size
-        ball_size = min(self.viz_width, self.viz_height) * 0.025
-        scaled_x, scaled_y = self.scale_coordinates(x, y)
+        """Update ball position with out-of-field visualization"""
+        # Scale ball size based on field size, make it slightly larger for SSL EL
+        if self.current_division == "Entry Level":
+            ball_size = (
+                min(self.viz_width, self.viz_height) * 0.035
+            )  # Larger for SSL EL
+        else:
+            ball_size = min(self.viz_width, self.viz_height) * 0.025
+
+        # Get scaled coordinates without clamping
+        scaled_x, scaled_y = self.scale_coordinates(x, y, clamp=False)
+
+        # Check if ball is within field boundaries
+        dims = self.divisions[self.current_division]
+        is_inside = (-dims["field_width"] / 2 <= x <= dims["field_width"] / 2) and (
+            -dims["field_height"] / 2 <= y <= dims["field_height"] / 2
+        )
 
         if self.ball:
             self.scene.removeItem(self.ball)
 
+        # Determine color based on position
+        ball_color = (
+            QColor(255, 165, 0) if is_inside else QColor(255, 0, 0)
+        )  # Orange/Red
+
+        # Create ball visualization
         ball_rect = QRectF(
             scaled_x - ball_size / 2, scaled_y - ball_size / 2, ball_size, ball_size
         )
-        self.ball = self.scene.addEllipse(
-            ball_rect, QPen(Qt.black), QBrush(QColor(255, 165, 0))
-        )
+        self.ball = self.scene.addEllipse(ball_rect, QPen(Qt.black), QBrush(ball_color))
 
     def set_team_visibility(self, blue_visible=True, yellow_visible=True):
         """Set visibility of teams"""
