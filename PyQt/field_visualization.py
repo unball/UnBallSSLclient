@@ -84,8 +84,11 @@ class FieldVisualization(QFrame):
             },
         }
 
-        self.current_division = "Entry Level"
+        self.current_division = "Division A"
         self.setup_field()
+
+        # Force a resize to trigger proper rendering
+        self.resizeEvent(None)
 
     def resizeEvent(self, event):
         """Handle resize events"""
@@ -384,8 +387,8 @@ class FieldVisualization(QFrame):
         """Update field dimensions when division changes"""
         if division in self.divisions:
             self.current_division = division
-            self.clear_safely()  # Use new clear method
-            self.setup_field()
+            self.clear_safely()  # Clear existing items
+            self.setup_field()  # Recreate field with new dimensions
 
     def clear_safely(self):
         """Safely clear all robots and ball from visualization"""

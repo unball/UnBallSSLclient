@@ -1,4 +1,7 @@
-from PyQt5.QtCore import Qt, QTimer
+import os
+import json
+
+from PyQt5.QtCore import Qt, QTimer, QCoreApplication
 from PyQt5.QtWidgets import (
     QMainWindow,
     QVBoxLayout,
@@ -12,19 +15,15 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
 )
-from PyQt5 import QtWidgets, uic
-
-
+from PyQt5 import uic
 from PyQt.field_visualization import FieldVisualization
 from PyQt.main_ui import Ui_MainWindow
-
-import json
-import os
+from .settings_ui import Ui_Dialog
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class MainWindow(QMainWindow):
+class SSLClientWindow(QMainWindow):
     def __init__(self, game=None):  # Add game parameter with default None
         super().__init__()
         self.game = game  # Store game reference
@@ -174,5 +173,41 @@ class MainWindow(QMainWindow):
             print(f"Division changed to {division} (max {max_robots} robots)")
 
     def open_settings(self):
-        self.settings_dialog = SettingsDialog()
+        self.settings_dialog = QDialog()
+        self.settings_ui = Ui_Dialog()  # Create an instance of the UI class
+        self.settings_ui.setupUi(self.settings_dialog)  # Setup the UI on the dialog
+
+        # Optional: Connect buttons if needed
+        self.settings_ui.pushButton.clicked.connect(self.save_settings)
+        self.settings_ui.pushButton_2.clicked.connect(self.reset_settings)
+
         self.settings_dialog.show()
+
+    def save_settings(self):
+        # Implement saving logic
+        print("Settings saved")
+        # No dialog closing
+        QMessageBox.information(
+            self.settings_dialog, "Settings", "Network settings saved successfully!"
+        )
+
+    def reset_settings(self):
+        # Implement reset logic
+        print("Settings reset")
+        # Optionally show a confirmation message
+        QMessageBox.information(
+            self.settings_dialog, "Reset", "Settings have been reset to default!"
+        )
+
+    def setup_division_selector(self):
+        self.division_combo = self.findChild(QComboBox, "division_combo")
+        if self.division_combo:
+            self.division_combo.currentTextChanged.connect(self.handle_division_change)
+
+            # Force initial division setup after the window is fully loaded
+            QTimer.singleShot(100, self.initial_division_setup)
+
+    def initial_division_setup(self):
+        if hasattr(self, "field_widget"):
+            initial_division = self.division_combo.currentText()
+            self.handle_division_change(initial_division)

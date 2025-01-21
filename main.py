@@ -27,7 +27,7 @@ from PyQt5.QtCore import Qt, QTimer
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Project imports
-from PyQt.main_window import MainWindow
+from PyQt.ssl_client import SSLClientWindow
 from GameController.GameController import GameController
 from VisionClient.Vision import Vision
 from SimulationGrSim.RobotControlClient_threaded import ThreadedRobotControlClient
@@ -418,7 +418,7 @@ def main():
         game = Game()
 
         # Create and show main window
-        window = MainWindow(game)
+        window = SSLClientWindow(game)
         window.show()
 
         # Start game systems
