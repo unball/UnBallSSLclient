@@ -210,75 +210,89 @@
         <enum>QFrame::Raised</enum>
        </property>
       </widget>
-      <widget class="QCheckBox" name="aestrela_checkbox">
-       <property name="geometry">
-        <rect>
-         <x>760</x>
-         <y>620</y>
-         <width>131</width>
-         <height>28</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>Visualizar A*</string>
-       </property>
-      </widget>
-      <widget class="QCheckBox" name="is_yellow">
+      <widget class="QWidget" name="">
        <property name="geometry">
         <rect>
          <x>10</x>
-         <y>620</y>
-         <width>141</width>
-         <height>28</height>
+         <y>610</y>
+         <width>881</width>
+         <height>41</height>
         </rect>
        </property>
-       <property name="text">
-        <string>Time Amarelo</string>
-       </property>
-      </widget>
-      <widget class="QCheckBox" name="show_blue">
-       <property name="geometry">
-        <rect>
-         <x>160</x>
-         <y>620</y>
-         <width>171</width>
-         <height>28</height>
-        </rect>
-       </property>
-       <property name="text">
-        <string>Mostrar Time Azul</string>
-       </property>
-       <property name="checked">
-        <bool>true</bool>
-       </property>
-      </widget>
-      <widget class="QCheckBox" name="show_yellow">
-       <property name="enabled">
-        <bool>true</bool>
-       </property>
-       <property name="geometry">
-        <rect>
-         <x>350</x>
-         <y>620</y>
-         <width>211</width>
-         <height>28</height>
-        </rect>
-       </property>
-       <property name="tabletTracking">
-        <bool>false</bool>
-       </property>
-       <property name="acceptDrops">
-        <bool>false</bool>
-       </property>
-       <property name="autoFillBackground">
-        <bool>false</bool>
-       </property>
-       <property name="text">
-        <string>Mostrar Time Amarelo</string>
-       </property>
-       <property name="checked">
-        <bool>true</bool>
-       </property>
+       <layout class="QGridLayout" name="gridLayout_2">
+        <item row="0" column="0">
+         <widget class="QComboBox" name="comboBox">
+          <item>
+           <property name="text">
+            <string>Time Azul</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Time Amarelo</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="0" column="4">
+         <widget class="QCheckBox" name="aestrela_checkbox">
+          <property name="text">
+           <string>Visualizar A*</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="3">
+         <widget class="QComboBox" name="division_combo">
+          <item>
+           <property name="text">
+            <string>Division A</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Division B</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Entry Level</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QCheckBox" name="show_blue">
+          <property name="text">
+           <string>Mostrar Time Azul</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="2">
+         <widget class="QCheckBox" name="show_yellow">
+          <property name="enabled">
+           <bool>true</bool>
+          </property>
+          <property name="tabletTracking">
+           <bool>false</bool>
+          </property>
+          <property name="acceptDrops">
+           <bool>false</bool>
+          </property>
+          <property name="autoFillBackground">
+           <bool>false</bool>
+          </property>
+          <property name="text">
+           <string>Mostrar Time Amarelo</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </widget>
      </widget>
      <widget class="QLabel" name="left_team">

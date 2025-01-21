@@ -1,34 +1,40 @@
-from PyQt5 import QtWidgets, QtGui
+from PyQt5 import QtWidgets, QtGui, QtCore
+from PyQt5.QtWidgets import QFrame, QGraphicsScene, QGraphicsView, QVBoxLayout
+from PyQt5.QtGui import QPainter
 from PyQt5.QtCore import Qt, QRectF, QLineF
 from PyQt5.QtGui import QPen, QBrush, QColor
 import math
 
 
-class FieldVisualization(QtWidgets.QFrame):
+class FieldVisualization(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.scene = QtWidgets.QGraphicsScene()
-        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.scene = QGraphicsScene()
+        self.view = QGraphicsView(self.scene)
 
-        # Add visibility tracking
-        self.blue_visible = True
-        self.yellow_visible = True
+        # Field margin for better appearance
+        self.field_margin = 30  # pixels
 
-        # SSL field dimensions in meters (standard field)
-        self.field_width = 4.5  # Length (x-axis)
-        self.field_height = 3.0  # Width (y-axis)
+        # Make view more adaptive
+        self.view.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
 
-        # Visualization dimensions (pixels)
-        self.viz_width = 700  # Base width in pixels
-        self.viz_height = int(
-            self.viz_width * (self.field_height / self.field_width)
-        )  # Maintain aspect ratio
+        # Better rendering settings
+        self.view.setRenderHint(QPainter.Antialiasing)
+        self.view.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.view.setBackgroundBrush(
+            QBrush(QColor(0, 80, 0))
+        )  # Darker green for border
 
-        # Configure view
-        self.view.setFixedSize(self.viz_width, self.viz_height)
+        # Remove scrollbars
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+
+        # Layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.view)
 
         # Track objects
         self.blue_robots = (
@@ -36,77 +42,192 @@ class FieldVisualization(QtWidgets.QFrame):
         )  # Key: robot_id, Value: (robot_shape, direction_line, id_text)
         self.yellow_robots = {}
         self.ball = None
+        self.blue_visible = True
+        self.yellow_visible = True
 
-        # Setup layout
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.view)
+        # Add division-specific dimensions
+        self.divisions = {
+            "Division A": {
+                "field_width": 12.0,  # Length (x-axis)
+                "field_height": 9.0,  # Width (y-axis)
+                "defense_width": 3.6,
+                "defense_height": 1.8,
+                "goal_width": 1.8,
+                "goal_depth": 0.18,
+                "max_robots": 11,
+            },
+            "Division B": {
+                "field_width": 9.0,
+                "field_height": 6.0,
+                "defense_width": 2.0,
+                "defense_height": 1.0,
+                "goal_width": 1.0,
+                "goal_depth": 0.18,
+                "max_robots": 6,
+            },
+            "Entry Level": {
+                "field_width": 4.5,
+                "field_height": 3.0,
+                "defense_width": 1.35,
+                "defense_height": 0.5,
+                "goal_width": 0.8,
+                "goal_depth": 0.18,
+                "max_robots": 3,
+            },
+        }
 
+        self.current_division = "Entry Level"
         self.setup_field()
 
-    def scale_coordinates(self, x, y):
-        """Convert SSL coordinates (in meters) to visualization coordinates"""
-        scaled_x = (x + self.field_width / 2) * (self.viz_width / self.field_width)
-        scaled_y = (-y + self.field_height / 2) * (self.viz_height / self.field_height)
-        return scaled_x, scaled_y
+    def resizeEvent(self, event):
+        """Handle resize events"""
+        super().resizeEvent(event)
+        self.setup_field()
 
     def setup_field(self):
-        field_color = QColor(0, 150, 0)
-        field_pen = QPen(Qt.white, 2)
+        """Set up field based on current division"""
+        dims = self.divisions[self.current_division]
 
-        # Main field
-        self.scene.addRect(
-            QRectF(0, 0, self.viz_width, self.viz_height),
-            field_pen,
-            QBrush(field_color),
+        # Clear whole scene first
+        self.scene.clear()
+
+        try:
+            # Calculate proper dimensions maintaining aspect ratio
+            field_aspect = dims["field_width"] / dims["field_height"]
+            frame_width = self.width() - 2 * self.field_margin
+            frame_height = self.height() - 2 * self.field_margin
+            frame_aspect = frame_width / frame_height
+
+            if frame_aspect > field_aspect:
+                self.viz_height = frame_height
+                self.viz_width = self.viz_height * field_aspect
+            else:
+                self.viz_width = frame_width
+                self.viz_height = self.viz_width / field_aspect
+
+            # Clear and setup scene with margin
+            self.scene.clear()
+            total_width = self.viz_width + 2 * self.field_margin
+            total_height = self.viz_height + 2 * self.field_margin
+            self.scene.setSceneRect(
+                -self.field_margin, -self.field_margin, total_width, total_height
+            )
+
+            # Field colors
+            field_color = QColor(0, 150, 0)  # Main field color
+            line_color = Qt.white
+            field_pen = QPen(line_color, 2)
+
+            # Main field
+            self.scene.addRect(
+                0, 0, self.viz_width, self.viz_height, field_pen, QBrush(field_color)
+            )
+
+            # Center line
+            self.scene.addLine(
+                self.viz_width / 2, 0, self.viz_width / 2, self.viz_height, field_pen
+            )
+
+            # Center circle
+            circle_radius = (0.5 * self.viz_width) / dims["field_width"]
+            center_x = self.viz_width / 2
+            center_y = self.viz_height / 2
+            self.scene.addEllipse(
+                center_x - circle_radius,
+                center_y - circle_radius,
+                circle_radius * 2,
+                circle_radius * 2,
+                field_pen,
+                QBrush(Qt.transparent),
+            )
+
+            # Goals
+            goal_width = 0.8 * self.viz_width / dims["field_width"]
+            goal_depth = 0.18 * self.viz_width / dims["field_width"]
+            goal_margin_y = (self.viz_height - goal_width) / 2
+
+            # Left goal
+            self.scene.addRect(
+                -goal_depth,
+                goal_margin_y,
+                goal_depth,
+                goal_width,
+                QPen(Qt.black),
+                QBrush(Qt.transparent),
+            )
+
+            # Right goal
+            self.scene.addRect(
+                self.viz_width,
+                goal_margin_y,
+                goal_depth,
+                goal_width,
+                QPen(Qt.black),
+                QBrush(Qt.transparent),
+            )
+
+            # Defense areas
+            defense_height = 1.35 * (
+                self.viz_width / dims["field_width"]
+            )  # Height along the y-axis
+            defense_width = 0.5 * (
+                self.viz_height / dims["field_height"]
+            )  # Width along the x-axis
+            defense_margin_y = (
+                self.viz_height - defense_height
+            ) / 2  # Centered vertically
+
+            # Left defense area (in front of the left goal)
+            self.scene.addRect(
+                0,  # Start at the goal line (x=0)
+                defense_margin_y,  # Centered vertically
+                defense_width,  # Width of the defense area (x-axis)
+                defense_height,  # Height of the defense area (y-axis)
+                field_pen,
+                QBrush(Qt.transparent),
+            )
+
+            # Right defense area (in front of the right goal)
+            self.scene.addRect(
+                self.viz_width - defense_width,  # Start at the right goal line
+                defense_margin_y,  # Centered vertically
+                defense_width,  # Width of the defense area (x-axis)
+                defense_height,  # Height of the defense area (y-axis)
+                field_pen,
+                QBrush(Qt.transparent),
+            )
+
+            # Fit view to scene
+            self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        except Exception as e:
+            print(f"Error setting up field: {e}")
+
+    def scale_coordinates(self, x, y, clamp=True):
+        """Convert SSL coordinates (meters) to visualization coordinates (pixels)"""
+        dims = self.divisions[self.current_division]
+
+        if clamp:
+            # Field boundaries check (only clamp if requested)
+            x = max(-dims["field_width"] / 2, min(dims["field_width"] / 2, x))
+            y = max(-dims["field_height"] / 2, min(dims["field_height"] / 2, y))
+
+        # Scale and translate coordinates
+        scaled_x = (x + dims["field_width"] / 2) * (
+            self.viz_width / dims["field_width"]
         )
-
-        # Center line
-        self.scene.addLine(
-            QLineF(self.viz_width / 2, 0, self.viz_width / 2, self.viz_height),
-            field_pen,
+        scaled_y = (-y + dims["field_height"] / 2) * (
+            self.viz_height / dims["field_height"]
         )
-
-        # Center circle
-        center_x = self.viz_width / 2 - 50
-        center_y = self.viz_height / 2 - 50
-        self.scene.addEllipse(
-            QRectF(center_x, center_y, 100, 100), field_pen, QBrush(Qt.transparent)
-        )
-
-        # Penalty areas
-        penalty_width = self.viz_width * 0.15
-        penalty_height = self.viz_height * 0.4
-        margin_y = (self.viz_height - penalty_height) / 2
-
-        # Left penalty area
-        self.scene.addRect(
-            QRectF(0, margin_y, penalty_width, penalty_height),
-            field_pen,
-            QBrush(Qt.transparent),
-        )
-
-        # Right penalty area
-        self.scene.addRect(
-            QRectF(
-                self.viz_width - penalty_width, margin_y, penalty_width, penalty_height
-            ),
-            field_pen,
-            QBrush(Qt.transparent),
-        )
+        return scaled_x, scaled_y
 
     def update_robot(self, x, y, orientation, team_color, robot_id):
         """Update or add robot position"""
-        robot_size = 30
+        # Scale robot size based on field size
+        robot_size = min(self.viz_width, self.viz_height) * 0.05
         scaled_x, scaled_y = self.scale_coordinates(x, y)
 
-        # Determine team and visibility
-        is_blue = team_color == Qt.blue
-        visible = self.blue_visible if is_blue else self.yellow_visible
-        robot_items = self.blue_robots if is_blue else self.yellow_robots
-
         # Remove old robot graphics if they exist
+        robot_items = self.blue_robots if team_color == Qt.blue else self.yellow_robots
         if robot_id in robot_items:
             old_robot, old_line, old_text = robot_items[robot_id]
             self.scene.removeItem(old_robot)
@@ -135,17 +256,19 @@ class FieldVisualization(QtWidgets.QFrame):
             scaled_y - text.boundingRect().height() / 2,
         )
 
-        # Store new items
+        # Store new robot items
         robot_items[robot_id] = (robot, line, text)
 
-        # Set visibility based on team
+        # Apply current visibility settings
+        visible = self.blue_visible if team_color == Qt.blue else self.yellow_visible
         robot.setVisible(visible)
         line.setVisible(visible)
         text.setVisible(visible)
 
     def update_ball(self, x, y):
         """Update ball position"""
-        ball_size = 15
+        # Scale ball size based on field size
+        ball_size = min(self.viz_width, self.viz_height) * 0.025
         scaled_x, scaled_y = self.scale_coordinates(x, y)
 
         if self.ball:
@@ -162,24 +285,63 @@ class FieldVisualization(QtWidgets.QFrame):
         """Set visibility of teams"""
         self.blue_visible = blue_visible
         self.yellow_visible = yellow_visible
+        self.update_robot_visibility()
 
-        print(
-            f"Setting visibility - Blue: {blue_visible}, Yellow: {yellow_visible}"
-        )  # Debug print
+    def update_robot_visibility(self):
+        """Update visibility of all robots based on current settings"""
+        for items in self.blue_robots.values():
+            for item in items:
+                item.setVisible(self.blue_visible)
 
-        # Update visibility of all blue robots
-        for robot_id in self.blue_robots:
-            robot, line, text = self.blue_robots[robot_id]
-            robot.setVisible(blue_visible)
-            line.setVisible(blue_visible)
-            text.setVisible(blue_visible)
+        for items in self.yellow_robots.values():
+            for item in items:
+                item.setVisible(self.yellow_visible)
 
-        # Update visibility of all yellow robots
-        for robot_id in self.yellow_robots:
-            robot, line, text = self.yellow_robots[robot_id]
-            robot.setVisible(yellow_visible)
-            line.setVisible(yellow_visible)
-            text.setVisible(yellow_visible)
+    def set_division(self, division):
+        """Update field dimensions when division changes"""
+        if division in self.divisions:
+            self.current_division = division
+            self.clear_safely()  # Use new clear method
+            self.setup_field()
+
+    def clear_safely(self):
+        """Safely clear all robots and ball from visualization"""
+        try:
+            # Clear blue robots
+            for robot_id in list(
+                self.blue_robots.keys()
+            ):  # Use list to avoid modification during iteration
+                if robot_id in self.blue_robots:
+                    robot, line, text = self.blue_robots[robot_id]
+                    if robot.scene() == self.scene:
+                        self.scene.removeItem(robot)
+                    if line.scene() == self.scene:
+                        self.scene.removeItem(line)
+                    if text.scene() == self.scene:
+                        self.scene.removeItem(text)
+
+            # Clear yellow robots
+            for robot_id in list(self.yellow_robots.keys()):
+                if robot_id in self.yellow_robots:
+                    robot, line, text = self.yellow_robots[robot_id]
+                    if robot.scene() == self.scene:
+                        self.scene.removeItem(robot)
+                    if line.scene() == self.scene:
+                        self.scene.removeItem(line)
+                    if text.scene() == self.scene:
+                        self.scene.removeItem(text)
+
+            # Clear ball
+            if self.ball and self.ball.scene() == self.scene:
+                self.scene.removeItem(self.ball)
+
+        except Exception as e:
+            print(f"Warning: Error during clear: {e}")
+        finally:
+            # Clear the dictionaries and ball reference
+            self.blue_robots.clear()
+            self.yellow_robots.clear()
+            self.ball = None
 
     def clear(self):
         """Clear all robots and ball from visualization"""

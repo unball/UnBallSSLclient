@@ -8,6 +8,9 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QAction,
+    QFrame,
+    QCheckBox,
+    QComboBox,
 )
 from PyQt5 import QtWidgets, uic
 
@@ -21,225 +24,155 @@ import os
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class MainWindow(QMainWindow, Ui_MainWindow):
-    def __init__(self, game_instance):
+class MainWindow(QMainWindow):
+    def __init__(self, game=None):  # Add game parameter with default None
         super().__init__()
-        self.game = game_instance
-
-        # Set up the UI generated from Qt Designer
-        self.setupUi(self)
-
-        # Setup field visualization
-        self.setup_field_visualization()
-
-        # Connect control buttons
-        self.connect_controls()
-
-        # Set up update timer for visualization
-        self.visualization_timer = QTimer()
-        self.visualization_timer.timeout.connect(self.update_visualization)
-        self.visualization_timer.start(16)  # ~60 FPS
-
-        self.actionAbrir = self.findChild(QAction, "actionAbrir")
-        self.actionAbrir.triggered.connect(self.open_settings)
-
-    def setup_field_visualization(self):
-        """Setup field visualization widget"""
-        self.field_widget = FieldVisualization()
-
-        # Get the field frame from the UI
-        if hasattr(self, "field_frame"):
-            layout = QVBoxLayout(self.field_frame)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setAlignment(Qt.AlignCenter)
-            layout.addWidget(self.field_widget)
-
-    def handle_game_controller_toggle(self, checked):
-        """Handle game controller checkbox separately from commands"""
-        if self.game:
-            print(f"Game controller {'enabled' if checked else 'disabled'}")
-            # Call appropriate game method
-            self.game.set_game_controller_enabled(checked)
-
-    def connect_controls(self):
-        """Connect UI controls to their handlers"""
-        # Game Controller checkbox - this should use a different handler
-        if hasattr(self, "gc_checkbox"):
-            self.gc_checkbox.toggled.connect(self.handle_game_controller_toggle)
-
-        # Team visibility toggles
-        if hasattr(self, "show_blue"):
-            self.show_blue.toggled.connect(self.update_team_visibility)
-        if hasattr(self, "show_yellow"):
-            self.show_yellow.toggled.connect(self.update_team_visibility)
-
-        # Connect control buttons using a dictionary of commands
-        button_commands = {
-            "pushButton_2": "HALT",
-            "pushButton": "FORCE_START",
-            "pushButton_4": "NORMAL_START",
-            "pushButton_3": "STOP",
-            "pushButton_9": "FREE_KICK",
-            "pushButton_8": "KICK_OFF",
-            "pushButton_10": "PENALTY",
-        }
-
-        for button_name, command in button_commands.items():
-            if hasattr(self, button_name):
-                button = getattr(self, button_name)
-                button.clicked.connect(
-                    lambda checked, cmd=command: self.handle_command(cmd)
-                )
-
-    def open_settings(self):
-        self.settings_dialog = SettingsDialog(self)
-        self.settings_dialog.exec_()
-
-    def update_visualization(self):
-        """Update field visualization with latest data"""
-        if not self.game:
-            print("No game instance")
-            return
-
-        vision_data = self.game.get_vision_data()
-        # print("Vision data:", vision_data)  # Debug print
-        if not vision_data:
-            return
-
-        # Update ball position
-        if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-            ball = vision_data["ball"]
-            # print(f"Ball position: x={ball['x']}, y={ball['y']}")  # Debug print
-            self.field_widget.update_ball(ball["x"], ball["y"])
-
-        # Update blue robots
-        if "robotsBlue" in vision_data:
-            for robot_id, robot in vision_data["robotsBlue"].items():
-                if robot["x"] is not None:
-                    # print(
-                    #    f"Blue robot {robot_id}: x={robot['x']}, y={robot['y']}, θ={robot['theta']}"
-                    # )  # Debug print
-                    self.field_widget.update_robot(
-                        robot["x"], robot["y"], robot["theta"], Qt.blue, robot_id
-                    )
-
-        # Update yellow robots
-        if "robotsYellow" in vision_data:
-            for robot_id, robot in vision_data["robotsYellow"].items():
-                if robot["x"] is not None:
-                    # print(
-                    #    f"Yellow robot {robot_id}: x={robot['x']}, y={robot['y']}, θ={robot['theta']}"
-                    # )  # Debug print
-                    self.field_widget.update_robot(
-                        robot["x"], robot["y"], robot["theta"], Qt.yellow, robot_id
-                    )
-
-    def update_team_visibility(self):
-        """Update team visibility based on checkboxes"""
-        if hasattr(self, "show_blue") and hasattr(self, "show_yellow"):
-            self.field_widget.set_team_visibility(
-                self.show_blue.isChecked(), self.show_yellow.isChecked()
-            )
-
-    def handle_game_controller(self, checked):
-        """Handle game controller toggle"""
-        if self.game:
-            self.game.set_game_controller_enabled(checked)
-
-    def handle_command(self, command):
-        """Handle button commands only"""
-        if self.game and isinstance(command, str):  # Make sure command is a string
-            print(f"Sending command: {command}")
-            self.game.send_command(command)
-
-    def closeEvent(self, event):
-        """Handle window close event"""
-        if self.game:
-            self.game.stop()
-        event.accept()
-
-
-def get_config(config_file=None):
-    """Load configuration from file"""
-    try:
-        if config_file:
-            config_path = config_file
-        else:
-            config_path = os.path.join("..", "config.json")
-
-        with open(config_path, "r") as f:
-            config = json.load(f)
-
-        return config
-
-    except FileNotFoundError:
-        raise FileNotFoundError("Config file not found")
-    except json.JSONDecodeError:
-        raise ValueError("Invalid JSON in config file")
-
-
-class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        ui_file = os.path.join(SCRIPT_DIR, "settings.ui")
+        self.game = game  # Store game reference
+        ui_file = os.path.join(SCRIPT_DIR, "main.ui")
         uic.loadUi(ui_file, self)
 
-        # Get references to UI elements
-        self.confirm_button = self.findChild(QPushButton, "pushButton")
-        self.reset_button = self.findChild(QPushButton, "pushButton_2")
+        # Set up field visualization
+        self.field_widget = FieldVisualization()
+        self.field_frame = self.findChild(QFrame, "field_frame")
 
-        self.multicast_ip = self.findChild(QLineEdit, "multicast_ip")
-        self.vision_port = self.findChild(QLineEdit, "vision_port")
-        self.referee_ip = self.findChild(QLineEdit, "referee_ip")
-        self.referee_port = self.findChild(QLineEdit, "referee_port")
-        self.yellow_port = self.findChild(QLineEdit, "yellow_port")
-        self.blue_port = self.findChild(QLineEdit, "blue_port")
+        # Create layout for field
+        layout = QVBoxLayout(self.field_frame)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.field_widget)
 
-        # Connect buttons
-        self.confirm_button.clicked.connect(self.apply_settings)
-        self.reset_button.clicked.connect(self.reset_default)
+        # Connect UI elements
+        self.setup_menu_actions()
+        self.setup_control_buttons()
+        self.setup_checkboxes()
+        self.setup_division_selector()
 
-        # Load saved settings
-        self.load_settings()
+        # Setup timer for regular updates if game is provided
+        if self.game:
+            self.update_timer = QTimer()
+            self.update_timer.timeout.connect(self.update_display)
+            self.update_timer.start(16)  # ~60 FPS
 
-    def apply_settings(self):
-        try:
-            # Save the settings to the config file
-            config = get_config()
-            config["network"]["multicast_ip"] = self.multicast_ip.text()
-            config["network"]["vision_port"] = int(self.vision_port.text())
-            config["network"]["referee_ip"] = self.referee_ip.text()
-            config["network"]["referee_port"] = int(self.referee_port.text())
-            config["network"]["yellow_port"] = int(self.yellow_port.text())
-            config["network"]["blue_port"] = int(self.blue_port.text())
+    def update_display(self):
+        """Update field display with latest game data"""
+        if not self.game:
+            return
 
-            with open(os.path.join("..", "config.json"), "w") as f:
-                json.dump(config, f, indent=4)
+        # Get latest vision data
+        vision_data = self.game.get_vision_data()
+        if vision_data:
+            # Update ball
+            if "ball" in vision_data:
+                ball = vision_data["ball"]
+                if ball.get("x") is not None:
+                    self.field_widget.update_ball(ball["x"], ball["y"])
 
-            # Apply the settings to your application
-            # For example, updating network connections with new values
-            QMessageBox.information(self, "Success", "Settings applied successfully")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to apply settings: {str(e)}")
+            # Update blue robots
+            if "robotsBlue" in vision_data:
+                for robot_id, robot in vision_data["robotsBlue"].items():
+                    if robot["x"] is not None:
+                        self.field_widget.update_robot(
+                            robot["x"], robot["y"], robot["theta"], Qt.blue, robot_id
+                        )
 
-    def reset_default(self):
-        config = get_config()
-        self.multicast_ip.setText(config["network"]["multicast_ip"])
-        self.vision_port.setText(str(config["network"]["vision_port"]))
-        self.referee_ip.setText(config["network"]["referee_ip"])
-        self.referee_port.setText(str(config["network"]["referee_port"]))
-        self.yellow_port.setText(str(config["network"]["yellow_port"]))
-        self.blue_port.setText(str(config["network"]["blue_port"]))
+            # Update yellow robots
+            if "robotsYellow" in vision_data:
+                for robot_id, robot in vision_data["robotsYellow"].items():
+                    if robot["x"] is not None:
+                        self.field_widget.update_robot(
+                            robot["x"], robot["y"], robot["theta"], Qt.yellow, robot_id
+                        )
 
-    def load_settings(self):
-        try:
-            config = get_config()
-            self.multicast_ip.setText(config["network"]["multicast_ip"])
-            self.vision_port.setText(str(config["network"]["vision_port"]))
-            self.referee_ip.setText(config["network"]["referee_ip"])
-            self.referee_port.setText(str(config["network"]["referee_port"]))
-            self.yellow_port.setText(str(config["network"]["yellow_port"]))
-            self.blue_port.setText(str(config["network"]["blue_port"]))
-        except Exception as e:
-            print(f"Error loading settings: {str(e)}")
-            self.reset_default()
+    def setup_menu_actions(self):
+        self.actionAbrir = self.findChild(QAction, "actionAbrir")
+        if self.actionAbrir:
+            self.actionAbrir.triggered.connect(self.open_settings)
+
+    def setup_control_buttons(self):
+        # Map button names to actions
+        control_buttons = {
+            "HALT": "pushButton_2",
+            "FORCE_START": "pushButton",
+            "NORMAL_START": "pushButton_4",
+            "STOP": "pushButton_3",
+            "FREE_KICK": "pushButton_9",
+            "KICK_OFF": "pushButton_8",
+            "PENALTI": "pushButton_10",
+            "POSICIONAMENTO": "pushButton_11",
+            "POSICIONAMENTO_2": "pushButton_12",
+            "POSICIONAMENTO_3": "pushButton_13",
+        }
+
+        # Connect all buttons
+        for action, button_name in control_buttons.items():
+            button = self.findChild(QPushButton, button_name)
+            if button:
+                button.clicked.connect(
+                    lambda checked, a=action: self.handle_control_action(a)
+                )
+
+    def setup_checkboxes(self):
+        # Team selection combobox
+        self.team_select = self.findChild(QComboBox, "comboBox")
+        if self.team_select:
+            self.team_select.currentTextChanged.connect(self.handle_team_selection)
+
+        # Game Controller checkbox
+        self.game_controller_checkbox = self.findChild(QCheckBox, "gc_checkbox")
+        if self.game_controller_checkbox:
+            self.game_controller_checkbox.toggled.connect(self.handle_game_controller)
+
+        # A* visualization checkbox
+        self.astar_checkbox = self.findChild(QCheckBox, "aestrela_checkbox")
+        if self.astar_checkbox:
+            self.astar_checkbox.toggled.connect(self.update_visualization)
+
+        # Team visibility checkboxes
+        self.show_blue = self.findChild(QCheckBox, "show_blue")
+        self.show_yellow = self.findChild(QCheckBox, "show_yellow")
+        if self.show_blue:
+            self.show_blue.toggled.connect(self.update_team_visibility)
+        if self.show_yellow:
+            self.show_yellow.toggled.connect(self.update_team_visibility)
+
+    def handle_team_selection(self, team):
+        """Handle team selection changes"""
+        if self.game:
+            is_yellow = team == "Time Amarelo"
+            print(f"Selected team: {'Yellow' if is_yellow else 'Blue'}")
+            # Update game configuration
+            self.game.config["match"]["team_color"] = "yellow" if is_yellow else "blue"
+
+    def setup_division_selector(self):
+        self.division_combo = self.findChild(QComboBox, "division_combo")
+        if self.division_combo:
+            self.division_combo.currentTextChanged.connect(self.handle_division_change)
+
+    def handle_game_controller(self, checked):
+        print(f"Game Controller: {'enabled' if checked else 'disabled'}")
+        # Implement game controller logic
+
+    def handle_control_action(self, action):
+        print(f"Control action triggered: {action}")
+        # Implement control action logic
+
+    def update_visualization(self, checked):
+        print(f"A* visualization: {'enabled' if checked else 'disabled'}")
+        # Implement visualization update logic
+
+    def update_team_visibility(self):
+        if hasattr(self, "field_widget"):
+            show_blue = self.show_blue.isChecked() if self.show_blue else True
+            show_yellow = self.show_yellow.isChecked() if self.show_yellow else True
+            self.field_widget.set_team_visibility(show_blue, show_yellow)
+
+    def handle_division_change(self, division):
+        """Handle division selection changes"""
+        if hasattr(self, "field_widget"):
+            self.field_widget.set_division(division)
+            max_robots = self.field_widget.divisions[division]["max_robots"]
+            print(f"Division changed to {division} (max {max_robots} robots)")
+
+    def open_settings(self):
+        self.settings_dialog = SettingsDialog()
+        self.settings_dialog.show()
