@@ -17,10 +17,10 @@ class FieldVisualization(QFrame):
 
         # Initialize el_bounds
         self.el_bounds = {
-            "x_min": -2.747,  # Minimum x coordinate
-            "x_max": 2.747,  # Maximum x coordinate
-            "y_min": -1.971,  # Minimum y coordinate
-            "y_max": 1.971,  # Maximum y coordinate
+            "x_min": -3.0,  # Increased from -2.747 to allow more space
+            "x_max": 3.0,  # Increased from 2.747
+            "y_min": -2.5,  # Increased from -1.971
+            "y_max": 2.5,  # Increased from 1.971
         }
 
         # Make view more adaptive
@@ -93,19 +93,22 @@ class FieldVisualization(QFrame):
         self.setup_field()
 
     def setup_field(self):
-        """Set up field based on current division"""
+        """Setup the field visualization"""
+        print("Setting up field...")  # Debug print
         dims = self.divisions[self.current_division]
 
-        # Clear whole scene first
-        self.scene.clear()
-
         try:
-            # Calculate proper dimensions maintaining aspect ratio
+            # Clear scene before any setup
+            self.scene.clear()
+
+            # Calculate basic dimensions
+            self.field_margin = 30
             field_aspect = dims["field_width"] / dims["field_height"]
             frame_width = self.width() - 2 * self.field_margin
             frame_height = self.height() - 2 * self.field_margin
             frame_aspect = frame_width / frame_height
 
+            # Calculate visualization dimensions maintaining aspect ratio
             if frame_aspect > field_aspect:
                 self.viz_height = frame_height
                 self.viz_width = self.viz_height * field_aspect
@@ -113,30 +116,47 @@ class FieldVisualization(QFrame):
                 self.viz_width = frame_width
                 self.viz_height = self.viz_width / field_aspect
 
-            # Clear and setup scene with margin
-            self.scene.clear()
-            total_width = self.viz_width + 2 * self.field_margin
-            total_height = self.viz_height + 2 * self.field_margin
-            self.scene.setSceneRect(
-                -self.field_margin, -self.field_margin, total_width, total_height
-            )
+            # Setup scene dimensions based on division
+            if self.current_division == "Entry Level":
+                # Extended margins for Entry Level
+                goal_margin = 0
+                side_margin = 0
+                height_margin = 80
 
-            # Field colors
+                # Set scene rect with extended margins
+                total_width = self.viz_width + 2 * (side_margin + goal_margin)
+                total_height = self.viz_height + 2 * height_margin
+
+                self.scene.setSceneRect(
+                    -(side_margin + goal_margin),
+                    -height_margin,
+                    total_width,
+                    total_height,
+                )
+            else:
+                # Standard margins for other divisions
+                total_width = self.viz_width + 2 * self.field_margin
+                total_height = self.viz_height + 2 * self.field_margin
+                self.scene.setSceneRect(
+                    -self.field_margin, -self.field_margin, total_width, total_height
+                )
+
+            # Field drawing colors
             field_color = QColor(0, 150, 0)  # Main field color
             line_color = Qt.white
             field_pen = QPen(line_color, 2)
 
-            # Main field
+            # Draw main field rectangle
             self.scene.addRect(
                 0, 0, self.viz_width, self.viz_height, field_pen, QBrush(field_color)
             )
 
-            # Center line
+            # Draw center line
             self.scene.addLine(
                 self.viz_width / 2, 0, self.viz_width / 2, self.viz_height, field_pen
             )
 
-            # Center circle
+            # Draw center circle
             circle_radius = (0.5 * self.viz_width) / dims["field_width"]
             center_x = self.viz_width / 2
             center_y = self.viz_height / 2
@@ -149,9 +169,9 @@ class FieldVisualization(QFrame):
                 QBrush(Qt.transparent),
             )
 
-            # Goals
-            goal_width = 0.8 * self.viz_width / dims["field_width"]
-            goal_depth = 0.18 * self.viz_width / dims["field_width"]
+            # Draw goals
+            goal_width = (dims["goal_width"] * self.viz_width) / dims["field_width"]
+            goal_depth = (dims["goal_depth"] * self.viz_width) / dims["field_width"]
             goal_margin_y = (self.viz_height - goal_width) / 2
 
             # Left goal
@@ -174,6 +194,7 @@ class FieldVisualization(QFrame):
                 QBrush(Qt.transparent),
             )
 
+            # Draw defense areas
             # Defense areas
             defense_height = 1.35 * (
                 self.viz_width / dims["field_width"]
@@ -185,28 +206,33 @@ class FieldVisualization(QFrame):
                 self.viz_height - defense_height
             ) / 2  # Centered vertically
 
-            # Left defense area (in front of the left goal)
+            # Left defense area
             self.scene.addRect(
-                0,  # Start at the goal line (x=0)
-                defense_margin_y,  # Centered vertically
-                defense_width,  # Width of the defense area (x-axis)
-                defense_height,  # Height of the defense area (y-axis)
+                0,
+                defense_margin_y,
+                defense_width,
+                defense_height,
                 field_pen,
                 QBrush(Qt.transparent),
             )
 
-            # Right defense area (in front of the right goal)
+            # Right defense area
             self.scene.addRect(
-                self.viz_width - defense_width,  # Start at the right goal line
-                defense_margin_y,  # Centered vertically
-                defense_width,  # Width of the defense area (x-axis)
-                defense_height,  # Height of the defense area (y-axis)
+                self.viz_width - defense_width,
+                defense_margin_y,
+                defense_width,
+                defense_height,
                 field_pen,
                 QBrush(Qt.transparent),
             )
+
+            # Store scaling factors for coordinate conversion
+            self.scale_factor_x = self.viz_width / dims["field_width"]
+            self.scale_factor_y = self.viz_height / dims["field_height"]
 
             # Fit view to scene
             self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
         except Exception as e:
             print(f"Error setting up field: {e}")
 
