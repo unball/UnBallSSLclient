@@ -320,6 +320,41 @@ class Game:
             except Exception as e:
                 print(f"Error stopping command thread: {e}")
 
+    def update_network_settings(self, network_config):
+        """
+        Update network settings for vision and referee
+        
+        :param network_config: Dictionary containing network configuration
+        """
+        try:
+            # Stop existing vision and referee threads
+            self.vision.stop()
+            self.referee.stop()
+
+            # Update configuration
+            self.config['network'].update(network_config)
+
+            # Reinitialize vision and referee with new settings
+            self.vision = Vision(self, 
+                multicast_ip=network_config.get('multicast_ip', self.config['network']['multicast_ip']), 
+                port=network_config.get('vision_port', self.config['network']['vision_port'])
+            )
+            self.referee = GameController(self, 
+                referee_ip=network_config.get('referee_ip', self.config['network']['referee_ip']), 
+                referee_port=network_config.get('referee_port', self.config['network']['referee_port'])
+            )
+
+            # Restart vision and referee
+            self.vision.start()
+            self.referee.start()
+
+            print("Network settings updated successfully")
+            return True
+
+        except Exception as e:
+            print(f"Error updating network settings: {e}")
+            return False
+
     def get_unball_data_vision(self):
         """Get vision data specific to UnBall team's robots"""
         if not self.last_vision_data:
@@ -381,13 +416,43 @@ class Game:
 def get_config(config_file=None):
     """Load configuration from file"""
     try:
-        if config_file:
-            with open(config_file, "r") as f:
+        # Try to load from specified or default config file
+        config_path = config_file or "config.json"
+
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
                 config = json.load(f)
         else:
-            with open("config.json", "r") as f:
-                config = json.load(f)
+            # Create a basic config file if it doesn't exist
+            config = {
+                "default_network": {
+                    "multicast_ip": "224.5.23.2",
+                    "vision_port": 10020,
+                    "referee_ip": "224.5.23.1",
+                    "referee_port": 10003,
+                    "yellow_port": 10004,
+                    "blue_port": 10005,
+                },
+                "network": {},
+                "match": {
+                    "team_1": "UnBall",
+                    "team_2": "Unknown",
+                    "event": "Unknown",
+                    "team_side": "left",
+                    "team_color": "blue",
+                    "time_logging": False,
+                },
+            }
 
+            # Save the default configuration
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=4)
+
+        # Merge default_network into network if network is empty
+        if not config.get("network", {}):
+            config["network"] = config.get("default_network", {}).copy()
+
+        # Validate required fields
         required_fields = [
             ("network", "multicast_ip"),
             ("network", "vision_port"),

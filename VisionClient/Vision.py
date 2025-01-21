@@ -9,11 +9,16 @@ from protocols.vision import messages_robocup_ssl_wrapper_pb2
 
 
 class Vision(threading.Thread):
-    def __init__(self, game) -> None:
+    def __init__(self, game, multicast_ip=None, port=None) -> None:
         super(Vision, self).__init__()
 
         self.game = game
         self.config = self.game.config
+
+        # Use passed parameters or fall back to config
+        self.host = multicast_ip or self.config["network"]["multicast_ip"]
+        self.vision_port = port or self.config["network"]["vision_port"]
+
         self.daemon = True
         self.running = False
         self._fps = 60

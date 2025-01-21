@@ -386,48 +386,50 @@ class FieldVisualization(QFrame):
     def set_division(self, division):
         """Update field dimensions when division changes"""
         if division in self.divisions:
-            self.current_division = division
-            self.clear_safely()  # Clear existing items
-            self.setup_field()  # Recreate field with new dimensions
+            # Clear everything first
+            self.scene.clear()  # Removes ALL items from the scene
 
-    def clear_safely(self):
-        """Safely clear all robots and ball from visualization"""
-        try:
-            # Clear blue robots
-            for robot_id in list(
-                self.blue_robots.keys()
-            ):  # Use list to avoid modification during iteration
-                if robot_id in self.blue_robots:
-                    robot, line, text = self.blue_robots[robot_id]
-                    if robot.scene() == self.scene:
-                        self.scene.removeItem(robot)
-                    if line.scene() == self.scene:
-                        self.scene.removeItem(line)
-                    if text.scene() == self.scene:
-                        self.scene.removeItem(text)
-
-            # Clear yellow robots
-            for robot_id in list(self.yellow_robots.keys()):
-                if robot_id in self.yellow_robots:
-                    robot, line, text = self.yellow_robots[robot_id]
-                    if robot.scene() == self.scene:
-                        self.scene.removeItem(robot)
-                    if line.scene() == self.scene:
-                        self.scene.removeItem(line)
-                    if text.scene() == self.scene:
-                        self.scene.removeItem(text)
-
-            # Clear ball
-            if self.ball and self.ball.scene() == self.scene:
-                self.scene.removeItem(self.ball)
-
-        except Exception as e:
-            print(f"Warning: Error during clear: {e}")
-        finally:
-            # Clear the dictionaries and ball reference
+            # Reset tracking dictionaries
             self.blue_robots.clear()
             self.yellow_robots.clear()
             self.ball = None
+
+            # Reinitialize the current division
+            self.current_division = division
+
+            # Recreate the field setup
+            self.setup_field()
+
+    def clear_safely(self):
+        """Completely clear all robots and ball from visualization"""
+        try:
+            # Remove all blue robots
+            for robot_id in list(self.blue_robots.keys()):
+                if robot_id in self.blue_robots:
+                    robot, line, text = self.blue_robots[robot_id]
+                    self.scene.removeItem(robot)
+                    self.scene.removeItem(line)
+                    self.scene.removeItem(text)
+
+            # Remove all yellow robots
+            for robot_id in list(self.yellow_robots.keys()):
+                if robot_id in self.yellow_robots:
+                    robot, line, text = self.yellow_robots[robot_id]
+                    self.scene.removeItem(robot)
+                    self.scene.removeItem(line)
+                    self.scene.removeItem(text)
+
+            # Remove ball
+            if self.ball:
+                self.scene.removeItem(self.ball)
+
+            # Clear dictionaries
+            self.blue_robots.clear()
+            self.yellow_robots.clear()
+            self.ball = None
+
+        except Exception as e:
+            print(f"Error during clear_safely: {e}")
 
     def clear(self):
         """Clear all robots and ball from visualization"""

@@ -30,24 +30,24 @@ class Ui_Dialog(object):
         self.gridLayout.addWidget(self.label_2, 1, 0, 1, 1)
         self.verticalLayout = QtWidgets.QVBoxLayout()
         self.verticalLayout.setObjectName("verticalLayout")
-        self.lineEdit = QtWidgets.QLineEdit(self.frame)
-        self.lineEdit.setObjectName("lineEdit")
-        self.verticalLayout.addWidget(self.lineEdit)
-        self.lineEdit_2 = QtWidgets.QLineEdit(self.frame)
-        self.lineEdit_2.setObjectName("lineEdit_2")
-        self.verticalLayout.addWidget(self.lineEdit_2)
-        self.lineEdit_3 = QtWidgets.QLineEdit(self.frame)
-        self.lineEdit_3.setObjectName("lineEdit_3")
-        self.verticalLayout.addWidget(self.lineEdit_3)
-        self.lineEdit_4 = QtWidgets.QLineEdit(self.frame)
-        self.lineEdit_4.setObjectName("lineEdit_4")
-        self.verticalLayout.addWidget(self.lineEdit_4)
-        self.lineEdit_5 = QtWidgets.QLineEdit(self.frame)
-        self.lineEdit_5.setObjectName("lineEdit_5")
-        self.verticalLayout.addWidget(self.lineEdit_5)
-        self.lineEdit_6 = QtWidgets.QLineEdit(self.frame)
-        self.lineEdit_6.setObjectName("lineEdit_6")
-        self.verticalLayout.addWidget(self.lineEdit_6)
+        self.multicast_ip_input = QtWidgets.QLineEdit(self.frame)
+        self.multicast_ip_input.setObjectName("multicast_ip_input")
+        self.verticalLayout.addWidget(self.multicast_ip_input)
+        self.vision_port_input = QtWidgets.QLineEdit(self.frame)
+        self.vision_port_input.setObjectName("vision_port_input")
+        self.verticalLayout.addWidget(self.vision_port_input)
+        self.referee_ip_input = QtWidgets.QLineEdit(self.frame)
+        self.referee_ip_input.setObjectName("referee_ip_input")
+        self.verticalLayout.addWidget(self.referee_ip_input)
+        self.referee_port_input = QtWidgets.QLineEdit(self.frame)
+        self.referee_port_input.setObjectName("referee_port_input")
+        self.verticalLayout.addWidget(self.referee_port_input)
+        self.yellow_port_input = QtWidgets.QLineEdit(self.frame)
+        self.yellow_port_input.setObjectName("yellow_port_input")
+        self.verticalLayout.addWidget(self.yellow_port_input)
+        self.blue_port_input = QtWidgets.QLineEdit(self.frame)
+        self.blue_port_input.setObjectName("blue_port_input")
+        self.verticalLayout.addWidget(self.blue_port_input)
         self.gridLayout.addLayout(self.verticalLayout, 0, 1, 6, 1)
         self.label_6 = QtWidgets.QLabel(self.frame)
         self.label_6.setObjectName("label_6")
@@ -65,9 +65,9 @@ class Ui_Dialog(object):
         self.label_4.setObjectName("label_4")
         self.gridLayout.addWidget(self.label_4, 3, 0, 1, 1)
         self.verticalLayout_2.addLayout(self.gridLayout)
-        self.pushButton_2 = QtWidgets.QPushButton(Dialog)
-        self.pushButton_2.setGeometry(QtCore.QRect(420, 140, 151, 51))
-        self.pushButton_2.setStyleSheet("QPushButton{\n"
+        self.reset_button = QtWidgets.QPushButton(Dialog)
+        self.reset_button.setGeometry(QtCore.QRect(420, 140, 151, 51))
+        self.reset_button.setStyleSheet("QPushButton{\n"
 "    border-radius: 3px;\n"
 "    background: rgb(234, 239, 44);\n"
 "    color: black;\n"
@@ -79,10 +79,10 @@ class Ui_Dialog(object):
 "QPushButton:pressed {\n"
 "    background: rgba(234, 239, 44, 40);\n"
 "}")
-        self.pushButton_2.setObjectName("pushButton_2")
-        self.pushButton = QtWidgets.QPushButton(Dialog)
-        self.pushButton.setGeometry(QtCore.QRect(420, 80, 151, 51))
-        self.pushButton.setStyleSheet("QPushButton{\n"
+        self.reset_button.setObjectName("reset_button")
+        self.confirm_button = QtWidgets.QPushButton(Dialog)
+        self.confirm_button.setGeometry(QtCore.QRect(420, 80, 151, 51))
+        self.confirm_button.setStyleSheet("QPushButton{\n"
 "    border-radius: 3px;\n"
 "    background: rgb(0, 85, 255);\n"
 "    color: white;\n"
@@ -94,7 +94,7 @@ class Ui_Dialog(object):
 "QPushButton:pressed {\n"
 "    background: rgba(0, 85, 255, 200);\n"
 "}")
-        self.pushButton.setObjectName("pushButton")
+        self.confirm_button.setObjectName("confirm_button")
 
         self.retranslateUi(Dialog)
         QtCore.QMetaObject.connectSlotsByName(Dialog)
@@ -108,5 +108,5 @@ class Ui_Dialog(object):
         self.label_5.setText(_translate("Dialog", "yellow_port"))
         self.label.setText(_translate("Dialog", "multicast_ip"))
         self.label_4.setText(_translate("Dialog", "referee_port"))
-        self.pushButton_2.setText(_translate("Dialog", "Resetar Default"))
-        self.pushButton.setText(_translate("Dialog", "Confirmar"))
+        self.reset_button.setText(_translate("Dialog", "Resetar Default"))
+        self.confirm_button.setText(_translate("Dialog", "Confirmar"))

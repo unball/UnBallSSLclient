@@ -47,22 +47,22 @@
       <item row="0" column="1" rowspan="6">
        <layout class="QVBoxLayout" name="verticalLayout">
         <item>
-         <widget class="QLineEdit" name="lineEdit"/>
+         <widget class="QLineEdit" name="multicast_ip_input"/>
         </item>
         <item>
-         <widget class="QLineEdit" name="lineEdit_2"/>
+         <widget class="QLineEdit" name="vision_port_input"/>
         </item>
         <item>
-         <widget class="QLineEdit" name="lineEdit_3"/>
+         <widget class="QLineEdit" name="referee_ip_input"/>
         </item>
         <item>
-         <widget class="QLineEdit" name="lineEdit_4"/>
+         <widget class="QLineEdit" name="referee_port_input"/>
         </item>
         <item>
-         <widget class="QLineEdit" name="lineEdit_5"/>
+         <widget class="QLineEdit" name="yellow_port_input"/>
         </item>
         <item>
-         <widget class="QLineEdit" name="lineEdit_6"/>
+         <widget class="QLineEdit" name="blue_port_input"/>
         </item>
        </layout>
       </item>
@@ -105,7 +105,7 @@
     </item>
    </layout>
   </widget>
-  <widget class="QPushButton" name="pushButton_2">
+  <widget class="QPushButton" name="reset_button">
    <property name="geometry">
     <rect>
      <x>420</x>
@@ -132,7 +132,7 @@ QPushButton:pressed {
     <string>Resetar Default</string>
    </property>
   </widget>
-  <widget class="QPushButton" name="pushButton">
+  <widget class="QPushButton" name="confirm_button">
    <property name="geometry">
     <rect>
      <x>420</x>

@@ -1,5 +1,5 @@
 {
-    "network" : {
+    "network": {
         "multicast_ip": "224.5.23.2",
         "vision_port": 10020,
         "referee_ip": "224.5.23.1",
@@ -7,7 +7,7 @@
         "yellow_port": 10004,
         "blue_port": 10005
     },
-    "match" : {
+    "match": {
         "team_1": "UnBall",
         "team_2": "Unknown",
         "event": "Unknown",

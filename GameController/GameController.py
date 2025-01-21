@@ -7,12 +7,18 @@ import os
 from google.protobuf.json_format import MessageToJson
 from protocols.GameController.ssl_gc_referee_message_pb2 import Referee
 
+
 class GameController(threading.Thread):
-    def __init__(self, game) -> None:
+    def __init__(self, game, referee_ip=None, referee_port=None) -> None:
         super(GameController, self).__init__()
 
         self.game = game
         self.config = self.game.config
+
+        # Use passed parameters or fall back to config
+        self.host = referee_ip or self.config["network"]["referee_ip"]
+        self.referee_port = referee_port or self.config["network"]["referee_port"]
+
         self.daemon = True
         self.running = False
         self._fps = 60

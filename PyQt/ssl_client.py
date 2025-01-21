@@ -1,5 +1,7 @@
 import os
 import json
+import math
+import copy
 
 from PyQt5.QtCore import Qt, QTimer, QCoreApplication
 from PyQt5.QtWidgets import (
@@ -21,6 +23,9 @@ from PyQt.main_ui import Ui_MainWindow
 from .settings_ui import Ui_Dialog
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
+DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "default_config.json")
 
 
 class SSLClientWindow(QMainWindow):
@@ -59,28 +64,43 @@ class SSLClientWindow(QMainWindow):
 
         # Get latest vision data
         vision_data = self.game.get_vision_data()
-        if vision_data:
-            # Update ball
-            if "ball" in vision_data:
-                ball = vision_data["ball"]
-                if ball.get("x") is not None:
-                    self.field_widget.update_ball(ball["x"], ball["y"])
 
-            # Update blue robots
-            if "robotsBlue" in vision_data:
-                for robot_id, robot in vision_data["robotsBlue"].items():
-                    if robot["x"] is not None:
-                        self.field_widget.update_robot(
-                            robot["x"], robot["y"], robot["theta"], Qt.blue, robot_id
-                        )
+        if not vision_data:
+            self.field_widget.clear_safely()
+            return
 
-            # Update yellow robots
-            if "robotsYellow" in vision_data:
-                for robot_id, robot in vision_data["robotsYellow"].items():
-                    if robot["x"] is not None:
-                        self.field_widget.update_robot(
-                            robot["x"], robot["y"], robot["theta"], Qt.yellow, robot_id
-                        )
+        # Detailed data validation
+        def is_valid_coordinate(coord):
+            return coord is not None and not math.isnan(coord)
+
+        # Ball validation and update
+        ball = vision_data.get("ball", {})
+        if is_valid_coordinate(ball.get("x")) and is_valid_coordinate(ball.get("y")):
+            self.field_widget.update_ball(ball["x"], ball["y"])
+
+        # Blue robots validation and update
+        blue_robots = vision_data.get("robotsBlue", {})
+        for robot_id, robot in blue_robots.items():
+            if (
+                is_valid_coordinate(robot.get("x"))
+                and is_valid_coordinate(robot.get("y"))
+                and is_valid_coordinate(robot.get("theta"))
+            ):
+                self.field_widget.update_robot(
+                    robot["x"], robot["y"], robot["theta"], Qt.blue, robot_id
+                )
+
+        # Yellow robots validation and update
+        yellow_robots = vision_data.get("robotsYellow", {})
+        for robot_id, robot in yellow_robots.items():
+            if (
+                is_valid_coordinate(robot.get("x"))
+                and is_valid_coordinate(robot.get("y"))
+                and is_valid_coordinate(robot.get("theta"))
+            ):
+                self.field_widget.update_robot(
+                    robot["x"], robot["y"], robot["theta"], Qt.yellow, robot_id
+                )
 
     def setup_menu_actions(self):
         self.actionAbrir = self.findChild(QAction, "actionAbrir")
@@ -173,31 +193,226 @@ class SSLClientWindow(QMainWindow):
             print(f"Division changed to {division} (max {max_robots} robots)")
 
     def open_settings(self):
-        self.settings_dialog = QDialog()
-        self.settings_ui = Ui_Dialog()  # Create an instance of the UI class
-        self.settings_ui.setupUi(self.settings_dialog)  # Setup the UI on the dialog
+        try:
+            # Create dialog and setup UI
+            self.settings_dialog = QDialog()
+            self.settings_ui = Ui_Dialog()
+            self.settings_ui.setupUi(self.settings_dialog)
 
-        # Optional: Connect buttons if needed
-        self.settings_ui.pushButton.clicked.connect(self.save_settings)
-        self.settings_ui.pushButton_2.clicked.connect(self.reset_settings)
+            # Determine config path
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "config.json",
+            )
+            print(f"Config path: {config_path}")
+            print(f"Config file exists: {os.path.exists(config_path)}")
 
-        self.settings_dialog.show()
+            # Load configuration
+            try:
+                with open(config_path, "r") as f:
+                    self.current_config = json.load(f)
+                print("Loaded config:", json.dumps(self.current_config, indent=2))
+            except Exception as e:
+                print(f"Error loading config: {e}")
+                # Use a default configuration if loading fails
+                self.current_config = {
+                    "network": {
+                        "multicast_ip": "224.5.23.2",
+                        "vision_port": 10020,
+                        "referee_ip": "224.5.23.1",
+                        "referee_port": 10003,
+                        "yellow_port": 10004,
+                        "blue_port": 10005,
+                    }
+                }
+                QMessageBox.warning(
+                    self.settings_dialog,
+                    "Error",
+                    "Could not load configuration. Using default values.",
+                )
+
+            # Prioritize network section
+            network_config = self.current_config.get("network", {})
+            print("Network config:", json.dumps(network_config, indent=2))
+
+            # Populate line edits with explicit type conversion and error checking
+            def safe_set(line_edit, value):
+                try:
+                    line_edit.setText(str(value) if value is not None else "")
+                    print(f"Setting {line_edit.objectName()} to {value}")
+                except Exception as e:
+                    print(f"Error setting {line_edit.objectName()}: {e}")
+
+            # Update widget names here
+            safe_set(
+                self.settings_ui.multicast_ip_input, network_config.get("multicast_ip")
+            )
+            safe_set(
+                self.settings_ui.vision_port_input, network_config.get("vision_port")
+            )
+            safe_set(
+                self.settings_ui.referee_ip_input, network_config.get("referee_ip")
+            )
+            safe_set(
+                self.settings_ui.referee_port_input, network_config.get("referee_port")
+            )
+            safe_set(
+                self.settings_ui.yellow_port_input, network_config.get("yellow_port")
+            )
+            safe_set(self.settings_ui.blue_port_input, network_config.get("blue_port"))
+
+            # Connect buttons (update button names here)
+            self.settings_ui.confirm_button.clicked.connect(self.save_settings)
+            self.settings_ui.reset_button.clicked.connect(self.reset_settings)
+
+            # Show dialog
+            self.settings_dialog.show()
+
+        except Exception as e:
+            print(f"Unexpected error in open_settings: {e}")
+            QMessageBox.critical(
+                None, "Critical Error", f"Could not open settings: {str(e)}"
+            )
 
     def save_settings(self):
-        # Implement saving logic
-        print("Settings saved")
-        # No dialog closing
-        QMessageBox.information(
-            self.settings_dialog, "Settings", "Network settings saved successfully!"
-        )
+        try:
+            # Validate and collect new settings
+            updated_config = copy.deepcopy(self.current_config)
+
+            # Update network section with new widget names
+            network_settings = {
+                "multicast_ip": self.settings_ui.multicast_ip_input.text(),
+                "vision_port": int(self.settings_ui.vision_port_input.text()),
+                "referee_ip": self.settings_ui.referee_ip_input.text(),
+                "referee_port": int(self.settings_ui.referee_port_input.text()),
+                "yellow_port": int(self.settings_ui.yellow_port_input.text()),
+                "blue_port": int(self.settings_ui.blue_port_input.text()),
+            }
+
+            # Validate settings
+            self.validate_settings({"network": network_settings})
+
+            # Update network settings in the game instance
+            if self.game:
+                result = self.game.update_network_settings(network_settings)
+                print(f"Network settings update result: {result}")
+
+                if result:
+                    # Determine config path
+                    config_path = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "config.json",
+                    )
+
+                    # Save to config file
+                    updated_config["network"] = network_settings
+                    with open(config_path, "w") as f:
+                        json.dump(updated_config, f, indent=4)
+
+                    # Update current configuration
+                    self.current_config = updated_config
+
+                    QMessageBox.information(
+                        self.settings_dialog,
+                        "Settings",
+                        "Network settings saved and applied successfully!",
+                    )
+                else:
+                    QMessageBox.warning(
+                        self.settings_dialog,
+                        "Error",
+                        "Could not apply network settings",
+                    )
+            else:
+                QMessageBox.warning(
+                    self.settings_dialog, "Error", "Game instance not available"
+                )
+
+        except ValueError as ve:
+            QMessageBox.warning(self.settings_dialog, "Invalid Input", str(ve))
+        except Exception as e:
+            QMessageBox.warning(
+                self.settings_dialog, "Error", f"Could not save settings: {str(e)}"
+            )
+
+    def validate_settings(self, config):
+        """Validate network settings"""
+        network = config.get("network", {})
+
+        # Basic validation
+        required_keys = [
+            "multicast_ip",
+            "vision_port",
+            "referee_ip",
+            "referee_port",
+            "yellow_port",
+            "blue_port",
+        ]
+
+        for key in required_keys:
+            if key not in network or not network[key]:
+                raise ValueError(f"Missing or invalid setting for {key}")
 
     def reset_settings(self):
-        # Implement reset logic
-        print("Settings reset")
-        # Optionally show a confirmation message
-        QMessageBox.information(
-            self.settings_dialog, "Reset", "Settings have been reset to default!"
-        )
+        """Reset settings to default"""
+        try:
+
+            # Load default configuration
+            default_config = self.load_default_config()
+
+            # Update current configuration
+            self.current_config = copy.deepcopy(default_config)
+
+            # Repopulate settings dialog with new widget names
+            self.settings_ui.multicast_ip_input.setText(
+                default_config["network"]["multicast_ip"]
+            )
+            self.settings_ui.vision_port_input.setText(
+                str(default_config["network"]["vision_port"])
+            )
+            self.settings_ui.referee_ip_input.setText(
+                default_config["network"]["referee_ip"]
+            )
+            self.settings_ui.referee_port_input.setText(
+                str(default_config["network"]["referee_port"])
+            )
+            self.settings_ui.yellow_port_input.setText(
+                str(default_config["network"]["yellow_port"])
+            )
+            self.settings_ui.blue_port_input.setText(
+                str(default_config["network"]["blue_port"])
+            )
+
+            QMessageBox.information(
+                self.settings_dialog, "Reset", "Settings have been reset to default!"
+            )
+
+        except Exception as e:
+            QMessageBox.warning(
+                self.settings_dialog, "Error", f"Could not reset settings: {str(e)}"
+            )
+
+    def load_default_config(self):
+        """Load default configuration"""
+        default_config = {
+            "network": {
+                "multicast_ip": "224.5.23.2",
+                "vision_port": 10020,
+                "referee_ip": "224.5.23.1",
+                "referee_port": 10003,
+                "yellow_port": 10004,
+                "blue_port": 10005,
+            },
+            "match": {
+                "team_1": "UnBall",
+                "team_2": "Unknown",
+                "event": "Unknown",
+                "team_side": "left",
+                "team_color": "blue",
+                "time_logging": False,
+            },
+        }
+        return default_config
 
     def setup_division_selector(self):
         self.division_combo = self.findChild(QComboBox, "division_combo")
