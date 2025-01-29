@@ -4,6 +4,7 @@ from PyQt5.QtGui import QPainter
 from PyQt5.QtCore import Qt, QRectF, QLineF
 from PyQt5.QtGui import QPen, QBrush, QColor
 import math
+from typing import List, Tuple
 
 
 class FieldVisualization(QFrame):
@@ -89,6 +90,16 @@ class FieldVisualization(QFrame):
 
         # Force a resize to trigger proper rendering
         self.resizeEvent(None)
+
+        # PathPlanner
+        self.show_paths = False
+        self.paths = {}  # robot_id -> path
+
+    def set_show_paths(self, show: bool):
+        """Enable/disable path visualization"""
+        self.show_paths = show
+        if hasattr(self, 'scene'):
+            self.scene.update()
 
     def resizeEvent(self, event):
         """Handle resize events"""
@@ -230,6 +241,28 @@ class FieldVisualization(QFrame):
             self.scale_factor_x = self.viz_width / dims["field_width"]
             self.scale_factor_y = self.viz_height / dims["field_height"]
 
+            # Draw paths if enabled
+            if self.show_paths:
+                for robot_id, path in self.paths.items():
+                    if not path:
+                        continue
+                    # Draw path with team color
+                    is_blue = robot_id in self.blue_robots
+                    path_color = (
+                        QColor(0, 0, 255, 128) if is_blue else QColor(255, 255, 0, 128)
+                    )
+                    path_pen = QPen(path_color, 2, Qt.DashLine)
+
+                    # Draw path segments
+                    for i in range(len(path) - 1):
+                        start_x, start_y = self.scale_coordinates(
+                            path[i][0], path[i][1]
+                        )
+                        end_x, end_y = self.scale_coordinates(
+                            path[i + 1][0], path[i + 1][1]
+                        )
+                        self.scene.addLine(start_x, start_y, end_x, end_y, path_pen)
+
             # Fit view to scene
             self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
@@ -253,6 +286,12 @@ class FieldVisualization(QFrame):
             self.viz_height / dims["field_height"]
         )
         return scaled_x, scaled_y
+
+    def update_path(self, robot_id: int, path: List[Tuple[float, float]]):
+        """Update stored path for a robot"""
+        self.paths[robot_id] = path
+        # Force field redraw to show new path
+        self.setup_field()
 
     def update_robot(self, x, y, orientation, team_color, robot_id):
         """Update or add robot position"""

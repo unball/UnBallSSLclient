@@ -93,6 +93,10 @@ class ThreadedRobotControlClient:
             return 100.0
         return ((self.sent_commands - self.failed_commands) / self.sent_commands) * 100
 
+    def get_position(self, robot_id):
+        """Get robot position"""
+        return {"x": 0.0, "y": 0.0, "theta": 0.0}  # Default position
+
     def get_stats(self):
         """Get command statistics"""
         return {

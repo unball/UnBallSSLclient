@@ -31,6 +31,13 @@ from PyQt.ssl_client import SSLClientWindow
 from GameController.GameController import GameController
 from VisionClient.Vision import Vision
 from SimulationGrSim.RobotControlClient_threaded import ThreadedRobotControlClient
+from RobotBehavior.grsim_client import GrSimController
+from RobotBehavior.irl_client import IRLController
+from PathPlanning.path_planner import PathPlanner
+from RobotBehavior.robot_state_machine import (
+    GoalkeeperStateMachine,
+    DefenderStateMachine,
+)
 from PyQt.field_visualization import FieldVisualization
 
 
@@ -63,6 +70,19 @@ class Game:
         self.referee = GameController(self)
         print("Vision and referee systems initialized")
 
+        # Initialize controllers
+        self.controllers = {
+            "grSim": {
+                "blue": GrSimController(team_port=10301),
+                "yellow": GrSimController(team_port=10302),
+            },
+            "IRL": {"blue": IRLController(), "yellow": IRLController()},
+        }
+        self.active_controller = self.controllers["grSim"]["blue"]
+
+        # Path Planner
+        self.path_planner = PathPlanner(self)
+
         # State tracking
         self.running = False
         self._update_thread = None
@@ -87,6 +107,9 @@ class Game:
         self.vision.start()
         self.referee.start()
         print("Vision and referee systems started")
+
+        # Start path planner
+        self.path_planner.start()
 
         self.running = True
         self._update_thread = threading.Thread(target=self.update_loop)
@@ -175,9 +198,33 @@ class Game:
             except Exception as e:
                 print(f"Error in movement execution: {str(e)}")
 
+    def set_control_mode(self, mode: str, team_color: str):
+        """Switch between grSim and IRL control"""
+        if mode in self.controllers and team_color in self.controllers[mode]:
+            old_controller = self.active_controller
+            self.active_controller = self.controllers[mode][team_color]
+            old_controller.stop()
+            self.active_controller.start()
+            print(f"Switched to {mode} controller for {team_color} team")
+
+    def handle_sim_state_change(self, state):
+        if not self.game:
+            return
+        team_color = (
+            "yellow" if self.team_select.currentText() == "Time Amarelo" else "blue"
+        )
+        self.game.set_control_mode(state, team_color)
+
+    def handle_team_selection(self, team):
+        if not self.game:
+            return
+        is_yellow = team == "Time Amarelo"
+        team_color = "yellow" if is_yellow else "blue"
+        mode = self.state_game.currentText()
+        self.game.set_control_mode(mode, team_color)
+
     def test_movement(self):
         """Test random movements for robots"""
-        import random
         import math
 
         # Simple test patterns
@@ -245,27 +292,37 @@ class Game:
                 print(f"Error in update loop: {str(e)}")
 
     def stop(self):
-        """Stop all running threads and components"""
+        """Stop all components"""
+        if not self.running:
+            return
+
         print("Stopping all systems...")
         self.running = False
 
-        # Stop robot control clients
-        if hasattr(self, "blue_robots"):
-            self.blue_robots.stop()
-        if hasattr(self, "yellow_robots"):
-            self.yellow_robots.stop()
+        # Stop threads
+        if self.command_thread and self.command_thread.is_alive():
+            self.current_command = None
+            self.command_thread.join(timeout=1.0)
 
-        # Stop vision and referee
-        if hasattr(self, "vision"):
-            self.vision.stop()
-        if hasattr(self, "referee"):
-            self.referee.stop()
+        # Stop components
+        components = [
+            "blue_robots",
+            "yellow_robots",
+            "vision",
+            "referee",
+            "path_planner",
+        ]
+        for comp in components:
+            if hasattr(self, comp):
+                try:
+                    getattr(self, comp).stop()
+                except Exception as e:
+                    print(f"Error stopping {comp}: {e}")
 
-        # Stop visualization timer
+        # Stop visualization
         if self.visualization_timer:
             self.visualization_timer.stop()
 
-        # Wait for update thread
         if self._update_thread and self._update_thread.is_alive():
             try:
                 self._update_thread.join(timeout=1.0)
@@ -323,7 +380,7 @@ class Game:
     def update_network_settings(self, network_config):
         """
         Update network settings for vision and referee
-        
+
         :param network_config: Dictionary containing network configuration
         """
         try:
@@ -332,16 +389,26 @@ class Game:
             self.referee.stop()
 
             # Update configuration
-            self.config['network'].update(network_config)
+            self.config["network"].update(network_config)
 
             # Reinitialize vision and referee with new settings
-            self.vision = Vision(self, 
-                multicast_ip=network_config.get('multicast_ip', self.config['network']['multicast_ip']), 
-                port=network_config.get('vision_port', self.config['network']['vision_port'])
+            self.vision = Vision(
+                self,
+                multicast_ip=network_config.get(
+                    "multicast_ip", self.config["network"]["multicast_ip"]
+                ),
+                port=network_config.get(
+                    "vision_port", self.config["network"]["vision_port"]
+                ),
             )
-            self.referee = GameController(self, 
-                referee_ip=network_config.get('referee_ip', self.config['network']['referee_ip']), 
-                referee_port=network_config.get('referee_port', self.config['network']['referee_port'])
+            self.referee = GameController(
+                self,
+                referee_ip=network_config.get(
+                    "referee_ip", self.config["network"]["referee_ip"]
+                ),
+                referee_port=network_config.get(
+                    "referee_port", self.config["network"]["referee_port"]
+                ),
             )
 
             # Restart vision and referee
@@ -354,6 +421,20 @@ class Game:
         except Exception as e:
             print(f"Error updating network settings: {e}")
             return False
+
+    def _initialize_robot_state_machines(self):
+        """Initialize state machines for all robots"""
+        team_color = self.config["match"]["team_color"]
+
+        # Initialize goalkeeper
+        self.robot_state_machines[0] = GoalkeeperStateMachine(
+            robot_id=0, team_color=team_color, game=self
+        )
+
+        # Initialize defender
+        self.robot_state_machines[1] = DefenderStateMachine(
+            robot_id=1, team_color=team_color, game=self
+        )
 
     def get_unball_data_vision(self):
         """Get vision data specific to UnBall team's robots"""

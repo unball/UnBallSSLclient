@@ -102,33 +102,57 @@ class SSLClientWindow(QMainWindow):
                     robot["x"], robot["y"], robot["theta"], Qt.yellow, robot_id
                 )
 
+    def closeEvent(self, event):
+        if self.game:
+            self.game.stop()
+        event.accept()
+
     def setup_menu_actions(self):
         self.actionAbrir = self.findChild(QAction, "actionAbrir")
         if self.actionAbrir:
             self.actionAbrir.triggered.connect(self.open_settings)
 
     def setup_control_buttons(self):
-        # Map button names to actions
-        control_buttons = {
-            "HALT": "pushButton_2",
-            "FORCE_START": "pushButton",
-            "NORMAL_START": "pushButton_4",
-            "STOP": "pushButton_3",
-            "FREE_KICK": "pushButton_9",
-            "KICK_OFF": "pushButton_8",
-            "PENALTI": "pushButton_10",
-            "POSICIONAMENTO": "pushButton_11",
-            "POSICIONAMENTO_2": "pushButton_12",
-            "POSICIONAMENTO_3": "pushButton_13",
+        control_map = {
+            "halt_button": ("HALT", "HALT"),
+            "stop_button": ("STOP", "STOP"),
+            "force_start_button": ("FORCE_START", "FORCE START"),
+            "normal_start_button": ("NORMAL_START", "NORMAL START"),
+            "timeout_button": ("TIMEOUT", "ASK TIMEOUT"),
+            "substitution_button": ("SUBSTITUTION", "SUBSTITUTION"),
+            "free_kick_button": ("FREE_KICK", "FREE-KICK POSITION"),
+            "kick_off_button": ("KICK_OFF", "KICK-OFF"),
+            "penalty_button": ("PENALTY", "PENALTY"),
+            "goal_kick_button": ("GOAL_KICK", "GOAL KICK"),
+            "corner_kick_button": ("CORNER_KICK", "CORNER KICK"),
+            "center_circle_button": ("CENTER_CIRCLE", "CENTER CIRCLE"),
+            "ball_placement_button": ("BALL_PLACEMENT", "BALL PLACEMENT"),
+            "penalty_mark_button": ("PENALTY_MARK", "PENALTY MARK"),
         }
 
-        # Connect all buttons
-        for action, button_name in control_buttons.items():
-            button = self.findChild(QPushButton, button_name)
+        for btn_name, (action, text) in control_map.items():
+            button = self.findChild(QPushButton, btn_name)
             if button:
                 button.clicked.connect(
                     lambda checked, a=action: self.handle_control_action(a)
                 )
+
+        # Setup simulation state selector
+        self.state_game = self.findChild(QComboBox, "state_game")
+        if self.state_game:
+            self.state_game.currentTextChanged.connect(self.handle_sim_state_change)
+
+        # Setup robot selector
+        self.box_all_robots = self.findChild(QComboBox, "box_all_robots")
+        if self.box_all_robots:
+            self.box_all_robots.clear()
+            for i in range(3):  # SSL-EL uses 3 robots
+                self.box_all_robots.addItem(f"Robot {i}")
+
+    def handle_sim_state_change(self, state):
+        """Handle simulation state changes between grSim and real robots"""
+        print(f"Switching to {state} mode")
+        # Implement simulation state switching logic
 
     def setup_checkboxes(self):
         # Team selection combobox
@@ -172,8 +196,20 @@ class SSLClientWindow(QMainWindow):
         # Implement game controller logic
 
     def handle_control_action(self, action):
+        """Handle control button clicks"""
         print(f"Control action triggered: {action}")
-        # Implement control action logic
+        if not self.game:
+            return
+
+        if action == "TIMEOUT":
+            # Request timeout
+            pass
+        elif action == "SUBSTITUTION":
+            # Request substitution
+            pass
+        else:
+            # Send command to game
+            self.game.send_command(action)
 
     def update_visualization(self, checked):
         print(f"A* visualization: {'enabled' if checked else 'disabled'}")

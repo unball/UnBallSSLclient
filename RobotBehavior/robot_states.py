@@ -1,0 +1,27 @@
+from enum import Enum
+
+
+class RobotState(Enum):
+    # Common states
+    IDLE = "IDLE"
+    MOVING_TO_POSITION = "MOVING_TO_POSITION"
+
+    # Goalkeeper states
+    BLOCKING = "BLOCKING"
+    INTERCEPTING = "INTERCEPTING"
+    RETURNING = "RETURNING"
+    EMERGENCY_DEFENSE = "EMERGENCY_DEFENSE"
+
+    # Defender/Attacker states
+    MARKING = "MARKING"
+    SUPPORTING = "SUPPORTING"
+    CLEARING = "CLEARING"
+    PRESSURING = "PRESSURING"
+    MOVING_TO_BALL = "MOVING_TO_BALL"
+    ATTACKING = "ATTACKING"
+
+
+class RobotRole(Enum):
+    GOALKEEPER = "GOALKEEPER"
+    DEFENDER = "DEFENDER"
+    ATTACKER = "ATTACKER"

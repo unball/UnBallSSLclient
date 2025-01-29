@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1200</width>
-    <height>800</height>
+    <width>1224</width>
+    <height>825</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -22,8 +22,8 @@
      <rect>
       <x>10</x>
       <y>10</y>
-      <width>1181</width>
-      <height>731</height>
+      <width>1201</width>
+      <height>761</height>
      </rect>
     </property>
     <property name="locale">
@@ -39,10 +39,10 @@
      <widget class="QFrame" name="frame">
       <property name="geometry">
        <rect>
-        <x>920</x>
+        <x>940</x>
         <y>10</y>
         <width>244</width>
-        <height>241</height>
+        <height>301</height>
        </rect>
       </property>
       <property name="frameShape">
@@ -72,30 +72,44 @@
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_2">
+        <widget class="QPushButton" name="halt_button">
          <property name="text">
           <string>HALT</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton">
+        <widget class="QPushButton" name="stop_button">
+         <property name="text">
+          <string>STOP</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="force_start_button">
          <property name="text">
           <string>FORCE START</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_4">
+        <widget class="QPushButton" name="normal_start_button">
          <property name="text">
           <string>NORMAL START</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_3">
+        <widget class="QPushButton" name="timeout_button">
          <property name="text">
-          <string>STOP</string>
+          <string>ASK TIMEOUT</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="substitution_button">
+         <property name="text">
+          <string>SUBSTITUTION</string>
          </property>
         </widget>
        </item>
@@ -104,10 +118,10 @@
      <widget class="QFrame" name="frame_2">
       <property name="geometry">
        <rect>
-        <x>920</x>
-        <y>260</y>
+        <x>940</x>
+        <y>320</y>
         <width>244</width>
-        <height>201</height>
+        <height>381</height>
        </rect>
       </property>
       <property name="frameShape">
@@ -118,62 +132,58 @@
       </property>
       <layout class="QVBoxLayout" name="verticalLayout_2">
        <item>
-        <widget class="QPushButton" name="pushButton_9">
+        <widget class="QPushButton" name="free_kick_button">
          <property name="text">
-          <string>FREE-KICK</string>
+          <string>FREE-KICK POSITION</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_8">
+        <widget class="QPushButton" name="kick_off_button">
          <property name="text">
           <string>KICK-OFF</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_10">
+        <widget class="QPushButton" name="penalty_button">
          <property name="text">
-          <string>PENALTI</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </widget>
-     <widget class="QFrame" name="frame_3">
-      <property name="geometry">
-       <rect>
-        <x>920</x>
-        <y>470</y>
-        <width>244</width>
-        <height>211</height>
-       </rect>
-      </property>
-      <property name="frameShape">
-       <enum>QFrame::StyledPanel</enum>
-      </property>
-      <property name="frameShadow">
-       <enum>QFrame::Raised</enum>
-      </property>
-      <layout class="QVBoxLayout" name="verticalLayout_3">
-       <item>
-        <widget class="QPushButton" name="pushButton_11">
-         <property name="text">
-          <string>POSICIONAMENTO</string>
+          <string>PENALTY</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_12">
+        <widget class="QPushButton" name="goal_kick_button">
          <property name="text">
-          <string>POSICIONAMENTO 2</string>
+          <string>GOAL KICK</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="pushButton_13">
+        <widget class="QPushButton" name="corner_kick_button">
          <property name="text">
-          <string>POSICIONAMENTO 3</string>
+          <string>CORNER KICK</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="center_circle_button">
+         <property name="text">
+          <string>CENTER CIRCLE</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="ball_placement_button">
+         <property name="text">
+          <string>BALL PLACEMENT</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="penalty_mark_button">
+         <property name="text">
+          <string>PENALTY MARK</string>
          </property>
         </widget>
        </item>
@@ -182,10 +192,10 @@
      <widget class="QFrame" name="frame_9">
       <property name="geometry">
        <rect>
-        <x>10</x>
-        <y>30</y>
+        <x>20</x>
+        <y>50</y>
         <width>901</width>
-        <height>651</height>
+        <height>661</height>
        </rect>
       </property>
       <property name="frameShape">
@@ -210,7 +220,7 @@
         <enum>QFrame::Raised</enum>
        </property>
       </widget>
-      <widget class="QWidget" name="">
+      <widget class="QWidget" name="layoutWidget">
        <property name="geometry">
         <rect>
          <x>10</x>
@@ -298,28 +308,50 @@
      <widget class="QLabel" name="left_team">
       <property name="geometry">
        <rect>
-        <x>10</x>
-        <y>10</y>
-        <width>461</width>
-        <height>16</height>
+        <x>20</x>
+        <y>20</y>
+        <width>144</width>
+        <height>22</height>
        </rect>
       </property>
       <property name="text">
-       <string>Team A</string>
+       <string>Team A vs Team B</string>
       </property>
      </widget>
-     <widget class="QLabel" name="right_team">
+     <widget class="QComboBox" name="state_game">
       <property name="geometry">
        <rect>
-        <x>520</x>
-        <y>9</y>
-        <width>391</width>
-        <height>21</height>
+        <x>770</x>
+        <y>10</y>
+        <width>141</width>
+        <height>30</height>
        </rect>
       </property>
-      <property name="text">
-       <string>Team B</string>
+      <item>
+       <property name="text">
+        <string>grSim</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>IRL</string>
+       </property>
+      </item>
+     </widget>
+     <widget class="QComboBox" name="box_all_robots">
+      <property name="geometry">
+       <rect>
+        <x>620</x>
+        <y>10</y>
+        <width>141</width>
+        <height>30</height>
+       </rect>
       </property>
+      <item>
+       <property name="text">
+        <string>Robot 1 </string>
+       </property>
+      </item>
      </widget>
     </widget>
     <widget class="QWidget" name="tab_2">
@@ -329,9 +361,9 @@
      <widget class="QFrame" name="frame_4">
       <property name="geometry">
        <rect>
-        <x>10</x>
-        <y>10</y>
-        <width>221</width>
+        <x>980</x>
+        <y>580</y>
+        <width>191</width>
         <height>101</height>
        </rect>
       </property>
@@ -374,6 +406,87 @@
        </item>
       </layout>
      </widget>
+     <widget class="QFrame" name="field_frame_2">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>10</y>
+        <width>961</width>
+        <height>671</height>
+       </rect>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::StyledPanel</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Raised</enum>
+      </property>
+     </widget>
+     <widget class="QFrame" name="frame_5">
+      <property name="geometry">
+       <rect>
+        <x>980</x>
+        <y>10</y>
+        <width>191</width>
+        <height>241</height>
+       </rect>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::StyledPanel</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Raised</enum>
+      </property>
+      <layout class="QVBoxLayout" name="verticalLayout_4">
+       <item>
+        <widget class="QCheckBox" name="gc_checkbox_2">
+         <property name="autoFillBackground">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>Utilizar GameController</string>
+         </property>
+         <property name="checked">
+          <bool>false</bool>
+         </property>
+         <property name="autoRepeat">
+          <bool>false</bool>
+         </property>
+         <property name="tristate">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_5">
+         <property name="text">
+          <string>HALT</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_6">
+         <property name="text">
+          <string>FORCE START</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_7">
+         <property name="text">
+          <string>NORMAL START</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton_14">
+         <property name="text">
+          <string>STOP</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </widget>
   </widget>
@@ -382,7 +495,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1200</width>
+     <width>1224</width>
      <height>27</height>
     </rect>
    </property>
