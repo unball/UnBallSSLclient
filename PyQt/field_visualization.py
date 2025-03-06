@@ -98,7 +98,7 @@ class FieldVisualization(QFrame):
     def set_show_paths(self, show: bool):
         """Enable/disable path visualization"""
         self.show_paths = show
-        if hasattr(self, 'scene'):
+        if hasattr(self, "scene"):
             self.scene.update()
 
     def resizeEvent(self, event):
@@ -241,33 +241,68 @@ class FieldVisualization(QFrame):
             self.scale_factor_x = self.viz_width / dims["field_width"]
             self.scale_factor_y = self.viz_height / dims["field_height"]
 
-            # Draw paths if enabled
-            if self.show_paths:
-                for robot_id, path in self.paths.items():
-                    if not path:
-                        continue
-                    # Draw path with team color
-                    is_blue = robot_id in self.blue_robots
-                    path_color = (
-                        QColor(0, 0, 255, 128) if is_blue else QColor(255, 255, 0, 128)
-                    )
-                    path_pen = QPen(path_color, 2, Qt.DashLine)
+            # Draw paths if enabled - improved error handling
+            if getattr(self, "show_paths", False):
+                try:
+                    for robot_id, path in self.paths.items():
+                        if not path or len(path) < 2:
+                            continue
 
-                    # Draw path segments
-                    for i in range(len(path) - 1):
-                        start_x, start_y = self.scale_coordinates(
-                            path[i][0], path[i][1]
+                        # Draw path with team color
+                        is_blue = robot_id in self.blue_robots
+                        path_color = (
+                            QColor(0, 0, 255, 128)
+                            if is_blue
+                            else QColor(255, 255, 0, 128)
                         )
-                        end_x, end_y = self.scale_coordinates(
-                            path[i + 1][0], path[i + 1][1]
-                        )
-                        self.scene.addLine(start_x, start_y, end_x, end_y, path_pen)
+                        path_pen = QPen(path_color, 2, Qt.DashLine)
+
+                        # Draw path segments
+                        for i in range(len(path) - 1):
+                            try:
+                                start_x, start_y = self.scale_coordinates(
+                                    path[i][0], path[i][1]
+                                )
+                                end_x, end_y = self.scale_coordinates(
+                                    path[i + 1][0], path[i + 1][1]
+                                )
+                                self.scene.addLine(
+                                    start_x, start_y, end_x, end_y, path_pen
+                                )
+                            except Exception as e:
+                                print(f"Error drawing path segment {i}: {e}")
+                                continue
+                except Exception as e:
+                    print(f"Error drawing paths: {e}")
 
             # Fit view to scene
             self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
         except Exception as e:
             print(f"Error setting up field: {e}")
+
+    def show_paths(self, robot_id=None, path=None):
+        """
+        Show path for a specific robot or all paths if no robot_id specified
+
+        Args:
+            robot_id: Optional robot ID to show path for
+            path: Optional path data to update before showing
+        """
+        try:
+            # If path data is provided, update it first
+            if robot_id is not None and path is not None:
+                self.update_path(robot_id, path)
+
+            # Set show_paths flag to true
+            self.show_paths = True
+
+            # Redraw the field with paths enabled
+            self.setup_field()
+
+        except Exception as e:
+            print(f"Error showing paths: {e}")
+            # Continue without crashing
 
     def scale_coordinates(self, x, y, clamp=True):
         """Convert SSL coordinates (meters) to visualization coordinates (pixels)"""
@@ -289,9 +324,22 @@ class FieldVisualization(QFrame):
 
     def update_path(self, robot_id: int, path: List[Tuple[float, float]]):
         """Update stored path for a robot"""
-        self.paths[robot_id] = path
-        # Force field redraw to show new path
-        self.setup_field()
+        try:
+            if path is None or len(path) < 2:
+                # No valid path to display
+                if robot_id in self.paths:
+                    del self.paths[robot_id]
+                return
+
+            # Store the path
+            self.paths[robot_id] = path
+
+            # Only force redraw if paths are visible
+            if getattr(self, "show_paths", False):
+                self.setup_field()
+
+        except Exception as e:
+            print(f"Error updating path for robot {robot_id}: {e}")
 
     def update_robot(self, x, y, orientation, team_color, robot_id):
         """Update or add robot position"""

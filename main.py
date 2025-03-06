@@ -37,6 +37,7 @@ from PathPlanning.path_planner import PathPlanner
 from RobotBehavior.robot_state_machine import (
     GoalkeeperStateMachine,
     DefenderStateMachine,
+    AttackerStateMachine,
 )
 from PyQt.field_visualization import FieldVisualization
 
@@ -110,6 +111,10 @@ class Game:
 
         # Start path planner
         self.path_planner.start()
+        print("Path planner started")
+
+        # Initialize robot state machines
+        self._initialize_robot_state_machines()
 
         self.running = True
         self._update_thread = threading.Thread(target=self.update_loop)
@@ -269,23 +274,21 @@ class Game:
                 # Update vision data if available
                 if self.vision.new_data:
                     self.last_vision_data = self.vision.get_last_frame()
-                    # Update field bounds when we get new geometry
                     self.update_field_bounds()
+
+                    # Update robot state machines if not in direct control mode
+                    if not self.current_command:
+                        for (
+                            robot_id,
+                            state_machine,
+                        ) in self.robot_state_machines.items():
+                            state_machine.update(self.last_vision_data)
 
                 # Update referee data independently
                 if self.referee.new_data or self.referee.any_referee:
                     self.last_referee_data = self.referee.get_state()
 
-                # Handle robot control based on referee state
-                if (
-                    self.last_referee_data
-                    and self.last_referee_data["command"] == "HALT"
-                ):
-                    self.blue_robots.send_global_velocity(0, 0, 0, 0)
-                    self.yellow_robots.send_global_velocity(0, 0, 0, 0)
-                elif self.last_vision_data:
-                    pass  # Robot control logic here
-
+                # Sleep for frame rate
                 time.sleep(1.0 / self._fps)
 
             except Exception as e:
@@ -349,20 +352,37 @@ class Game:
         # Stop previous movement thread if exists
         if self.command_thread and self.command_thread.is_alive():
             self.current_command = None
-            self.command_thread.join()
+            self.command_thread.join(timeout=1.0)
 
         if command == "HALT" or command == "STOP":
-            # Stop all robots
-            self.current_command = None
+            # Stop all robots and disable state machines temporarily
+            self.current_command = command
             for i in range(3):
                 self.blue_robots.send_global_velocity(i, 0, 0, 0)
                 self.yellow_robots.send_global_velocity(i, 0, 0, 0)
-        else:
-            # Start new movement pattern
+        elif command == "FORCE_START":
+            # Enable state machines - they'll take over control
+            self.current_command = None
+        elif command == "NORMAL_START":
+            # Enable state machines with normal start behavior
+            self.current_command = None
+        elif command == "KICK-OFF":
+            # Reset robots to kick-off positions
+            # This could trigger a special state in the state machines
             self.current_command = command
-            self.command_thread = threading.Thread(target=self.execute_movement)
-            self.command_thread.daemon = True
-            self.command_thread.start()
+            # Additional kick-off logic
+        elif command in ["FREE-KICK", "PENALTY", "GOAL_KICK", "CORNER_KICK"]:
+            # Set up for special plays
+            self.current_command = command
+            # Additional special play logic
+        else:
+            # Other commands
+            self.current_command = command
+
+        # For testing: Force update of state machines immediately
+        if self.current_command is None and self.last_vision_data:
+            for robot_id, state_machine in self.robot_state_machines.items():
+                state_machine.update(self.last_vision_data)
 
     def stop(self):
         """Stop all components"""
@@ -422,18 +442,25 @@ class Game:
             print(f"Error updating network settings: {e}")
             return False
 
+    # Add to your Game class in main.py
     def _initialize_robot_state_machines(self):
-        """Initialize state machines for all robots"""
+        """Initialize state machines for different robot roles"""
+        self.robot_state_machines = {}
         team_color = self.config["match"]["team_color"]
 
-        # Initialize goalkeeper
+        # Initialize goalkeeper (robot ID 0)
         self.robot_state_machines[0] = GoalkeeperStateMachine(
             robot_id=0, team_color=team_color, game=self
         )
 
-        # Initialize defender
+        # Initialize defender (robot ID 1)
         self.robot_state_machines[1] = DefenderStateMachine(
             robot_id=1, team_color=team_color, game=self
+        )
+
+        # Initialize attacker (robot ID 2)
+        self.robot_state_machines[2] = AttackerStateMachine(
+            robot_id=2, team_color=team_color, game=self
         )
 
     def get_unball_data_vision(self):
@@ -572,9 +599,16 @@ def main():
 
         # Handle Ctrl+C gracefully
         def signal_handler(sig, frame):
-            print("\nEncerrando sistemas...")
-            game.stop()
-            app.quit()
+            print("\nShutting down systems gracefully...")
+
+            # Stop the game if it exists
+            if "game" in globals():
+                game.stop()
+
+            # Sleep briefly to allow threads to clean up
+            time.sleep(0.5)
+            print("Shutdown complete")
+            sys.exit(0)
 
         signal.signal(signal.SIGINT, signal_handler)
 

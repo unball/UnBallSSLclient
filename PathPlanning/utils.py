@@ -61,3 +61,24 @@ def inflate_obstacles(
         inflated_obstacles.update(map(tuple, inflated_points))
 
     return inflated_obstacles
+
+    def smooth_path(path, weight_data=0.5, weight_smooth=0.1, tolerance=0.000001):
+        """Apply path smoothing to reduce angular movements"""
+        if not path or len(path) <= 2:
+            return path
+
+        new_path = path.copy()
+        change = tolerance
+
+        while change >= tolerance:
+            change = 0.0
+            for i in range(1, len(path) - 1):
+                for j in range(2):  # For x and y coordinates
+                    aux = new_path[i][j]
+                    new_path[i][j] += weight_data * (path[i][j] - new_path[i][j])
+                    new_path[i][j] += weight_smooth * (
+                        new_path[i - 1][j] + new_path[i + 1][j] - 2.0 * new_path[i][j]
+                    )
+                    change += abs(aux - new_path[i][j])
+
+        return new_path

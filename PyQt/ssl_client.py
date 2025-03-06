@@ -29,7 +29,7 @@ DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "default_config.json")
 
 
 class SSLClientWindow(QMainWindow):
-    def __init__(self, game=None):  # Add game parameter with default None
+    def __init__(self, game=None):
         super().__init__()
         self.game = game  # Store game reference
         ui_file = os.path.join(SCRIPT_DIR, "main.ui")
@@ -51,11 +51,22 @@ class SSLClientWindow(QMainWindow):
         self.setup_checkboxes()
         self.setup_division_selector()
 
+        # Connect A* visualization checkbox - ADD THIS HERE
+        self.aestrela_checkbox = self.findChild(QCheckBox, "aestrela_checkbox")
+        if self.aestrela_checkbox:
+            self.aestrela_checkbox.toggled.connect(self.update_visualization_settings)
+
         # Setup timer for regular updates if game is provided
         if self.game:
             self.update_timer = QTimer()
             self.update_timer.timeout.connect(self.update_display)
             self.update_timer.start(16)  # ~60 FPS
+
+    # Add this method to your class
+    def update_visualization_settings(self):
+        """Update visualization settings based on checkboxes"""
+        if hasattr(self, "field_widget"):
+            self.field_widget.set_show_paths(self.aestrela_checkbox.isChecked())
 
     def update_display(self):
         """Update field display with latest game data"""
@@ -87,7 +98,7 @@ class SSLClientWindow(QMainWindow):
                 and is_valid_coordinate(robot.get("theta"))
             ):
                 self.field_widget.update_robot(
-                    robot["x"], robot["y"], robot["theta"], Qt.blue, robot_id
+                    robot["x"], robot["y"], robot["theta"], Qt.blue, int(robot_id)
                 )
 
         # Yellow robots validation and update
@@ -99,8 +110,46 @@ class SSLClientWindow(QMainWindow):
                 and is_valid_coordinate(robot.get("theta"))
             ):
                 self.field_widget.update_robot(
-                    robot["x"], robot["y"], robot["theta"], Qt.yellow, robot_id
+                    robot["x"], robot["y"], robot["theta"], Qt.yellow, int(robot_id)
                 )
+
+        # Update path visualization if A* checkbox is checked
+        if hasattr(self, "astar_checkbox") and self.astar_checkbox.isChecked():
+            if hasattr(self.game, "path_planner"):
+                # Get paths for each robot
+                for robot_id in range(3):
+                    path = self.game.path_planner.get_path(int(robot_id))
+                    if path:
+                        self.field_widget.update_path(int(robot_id), path)
+
+        # Update status labels if available
+        if hasattr(self, "robot_status_labels") and hasattr(
+            self.game, "robot_state_machines"
+        ):
+            for robot_id, state_machine in self.game.robot_state_machines.items():
+                if robot_id in self.robot_status_labels:
+                    role = state_machine.role.value if state_machine.role else "Unknown"
+                    state = (
+                        state_machine.current_state.value
+                        if state_machine.current_state
+                        else "IDLE"
+                    )
+                    self.robot_status_labels[robot_id].setText(
+                        f"Robot {robot_id} ({role}): {state}"
+                    )
+
+        # Update robot status indicators
+        if hasattr(self.game, "robot_state_machines"):
+            for robot_id, state_machine in self.game.robot_state_machines.items():
+                status_label = getattr(self, f"robot{robot_id}_status", None)
+                if status_label:
+                    role = state_machine.role.value if state_machine.role else "Unknown"
+                    state = (
+                        state_machine.current_state.value
+                        if state_machine.current_state
+                        else "IDLE"
+                    )
+                    status_label.setText(f"Robot {robot_id} ({role}): {state}")
 
     def closeEvent(self, event):
         if self.game:
@@ -133,9 +182,13 @@ class SSLClientWindow(QMainWindow):
         for btn_name, (action, text) in control_map.items():
             button = self.findChild(QPushButton, btn_name)
             if button:
-                button.clicked.connect(
-                    lambda checked, a=action: self.handle_control_action(a)
-                )
+                if btn_name == "force_start_button":
+                    # Special handling for force start button
+                    button.clicked.connect(self.handle_force_start)
+                else:
+                    button.clicked.connect(
+                        lambda checked, a=action: self.handle_control_action(a)
+                    )
 
         # Setup simulation state selector
         self.state_game = self.findChild(QComboBox, "state_game")
@@ -148,6 +201,36 @@ class SSLClientWindow(QMainWindow):
             self.box_all_robots.clear()
             for i in range(3):  # SSL-EL uses 3 robots
                 self.box_all_robots.addItem(f"Robot {i}")
+
+    def handle_force_start(self):
+        """Handle FORCE START button - start game and initialize behavior"""
+        if self.game:
+            # Start the game if not already started
+            self.start_game()
+
+            # Then send the FORCE_START command
+            self.handle_control_action("FORCE_START")
+
+    def start_game(self):
+        """Initialize and start the game"""
+        if not self.game or not hasattr(self.game, "start"):
+            return
+
+        # Check if game is already running
+        if hasattr(self.game, "running") and self.game.running:
+            # Game is already running, just initialize robot state machines
+            if not hasattr(self.game, "robot_state_machines"):
+                self.game._initialize_robot_state_machines()
+        else:
+            # First start the game systems if not running
+            self.game.start()
+
+            # Then initialize robot state machines
+            if not hasattr(self.game, "robot_state_machines"):
+                self.game._initialize_robot_state_machines()
+
+        # Update the UI once to show initial states
+        self.update_display()
 
     def handle_sim_state_change(self, state):
         """Handle simulation state changes between grSim and real robots"""
