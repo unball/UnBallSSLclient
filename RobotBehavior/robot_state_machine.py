@@ -3,6 +3,8 @@ from threading import Lock
 from typing import Tuple, Dict, Optional, List
 from .robot_states import RobotState, RobotRole
 
+DEBUG_ROBOT_BEHAVIOR = False
+
 
 class PathFollower:
     """Manages following a path smoothly"""
@@ -95,8 +97,44 @@ class RobotStateMachine:
             self._execute_current_state(vision_data)
 
     def _decide_next_action(self, vision_data: Dict):
-        """To be implemented by specific roles"""
-        pass
+        """Robot decision making"""
+        # print(f"Attacker {self.robot_id} decision making...")
+
+        # With conditional prints:
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(f"Attacker {self.robot_id} decision making...")
+
+        if not vision_data or "ball" not in vision_data:
+            self.current_state = RobotState.RETURNING
+            self.target_position = self.home_position
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"No vision data or ball. Returning home to {self.home_position}")
+            return
+
+        ball = vision_data["ball"]
+        if ball["x"] is None:
+            self.current_state = RobotState.RETURNING
+            self.target_position = self.home_position
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Ball not detected. Returning home to {self.home_position}")
+            return
+
+        current_pos = self._get_current_pos()
+        if not current_pos:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print("Robot position not detected. Cannot make decisions.")
+            return
+
+        # Calculate distance to ball
+        distance_to_ball = (
+            (current_pos[0] - ball["x"]) ** 2 + (current_pos[1] - ball["y"]) ** 2
+        ) ** 0.5
+
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"Ball at ({ball['x']:.2f}, {ball['y']:.2f}), distance: {distance_to_ball:.2f}"
+            )
+            print(f"Current position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
 
     def _execute_current_state(self, vision_data: Dict):
         """Execute behavior for current state"""
@@ -252,6 +290,24 @@ class RobotStateMachine:
         controller.send_global_velocity(
             self.robot_id, velocity_x, velocity_y, angular_velocity
         )
+
+    def _follow_path(self):
+        """Follow the computed path using the path follower"""
+        current_pos = self._get_current_pos()
+        if not current_pos:
+            return
+
+        # Get the latest path from the path planner
+        path = self.game.path_planner.get_path(self.robot_id)
+
+        if path and len(path) > 0:
+            # Get target point from path follower
+            target_point = self.path_follower.get_target_point(current_pos, path)
+
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"Found lookahead point at index {path.index(target_point) if target_point in path else 'N/A'} in path"
+                )
 
 
 class GoalkeeperStateMachine(RobotStateMachine):

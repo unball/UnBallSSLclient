@@ -544,6 +544,7 @@
     </property>
     <addaction name="separator"/>
     <addaction name="actionAbrir"/>
+    <addaction name="actionPathing_Debug"/>
    </widget>
    <addaction name="menuConfigura_es_de_Porta"/>
   </widget>
@@ -551,6 +552,11 @@
   <action name="actionAbrir">
    <property name="text">
     <string>Configurar IPS</string>
+   </property>
+  </action>
+  <action name="actionPathing_Debug">
+   <property name="text">
+    <string>Debug</string>
    </property>
   </action>
  </widget>

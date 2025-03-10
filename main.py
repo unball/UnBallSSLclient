@@ -17,11 +17,7 @@ import math
 import signal
 import traceback
 from PyQt5 import QtWidgets, uic
-from PyQt5.QtWidgets import (
-    QMainWindow,
-    QApplication,
-    QVBoxLayout,
-)
+from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt, QTimer
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -386,16 +382,79 @@ class Game:
 
     def stop(self):
         """Stop all components"""
+        if not self.running:
+            return
+
         print("Stopping all systems...")
         self.running = False
         self.current_command = None  # Stop movement thread
 
-        # Stop existing threads
-        if self.command_thread and self.command_thread.is_alive():
+        # Signal path planner to stop before other components
+        if hasattr(self, "path_planner"):
+            try:
+                self.path_planner.running = False
+                time.sleep(0.1)  # Brief pause to let threads recognize stop signal
+            except Exception as e:
+                print(f"Error stopping path planner: {e}")
+
+        # Stop existing command thread
+        if (
+            hasattr(self, "command_thread")
+            and self.command_thread
+            and self.command_thread.is_alive()
+        ):
             try:
                 self.command_thread.join(timeout=1.0)
             except Exception as e:
                 print(f"Error stopping command thread: {e}")
+
+        # Stop components
+        components = [
+            "blue_robots",
+            "yellow_robots",
+            "vision",
+            "referee",
+            "path_planner",
+        ]
+        for comp in components:
+            if hasattr(self, comp):
+                try:
+                    getattr(self, comp).stop()
+                except Exception as e:
+                    print(f"Error stopping {comp}: {e}")
+
+        # Stop visualization
+        if hasattr(self, "visualization_timer") and self.visualization_timer:
+            try:
+                self.visualization_timer.stop()
+            except Exception as e:
+                print(f"Error stopping visualization timer: {e}")
+
+        # Stop update thread
+        if (
+            hasattr(self, "_update_thread")
+            and self._update_thread
+            and self._update_thread.is_alive()
+        ):
+            try:
+                self._update_thread.join(timeout=1.0)
+            except Exception as e:
+                print(f"Error joining update thread: {e}")
+
+        # Final cleanup
+        try:
+            # Reset any global state that might be needed
+            if hasattr(self, "controllers"):
+                for mode in self.controllers:
+                    for color in self.controllers[mode]:
+                        try:
+                            self.controllers[mode][color].stop()
+                        except Exception as e:
+                            print(f"Error stopping controller {mode}/{color}: {e}")
+        except Exception as e:
+            print(f"Error in final cleanup: {e}")
+
+        print("All systems stopped")
 
     def update_network_settings(self, network_config):
         """

@@ -2,6 +2,7 @@ import os
 import json
 import math
 import copy
+import sys
 
 from PyQt5.QtCore import Qt, QTimer, QCoreApplication
 from PyQt5.QtWidgets import (
@@ -21,6 +22,8 @@ from PyQt5 import uic
 from PyQt.field_visualization import FieldVisualization
 from PyQt.main_ui import Ui_MainWindow
 from .settings_ui import Ui_Dialog
+from .field_visualization import FieldVisualization
+from .debug_window import DebugWindow, DebugStreamRedirector
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -34,6 +37,21 @@ class SSLClientWindow(QMainWindow):
         self.game = game  # Store game reference
         ui_file = os.path.join(SCRIPT_DIR, "main.ui")
         uic.loadUi(ui_file, self)
+
+        # Set up stdout redirection
+        self.stdout_redirector = DebugStreamRedirector(sys.stdout)
+        sys.stdout = self.stdout_redirector
+
+        # Connect signal to log capture
+        self.stdout_redirector.text_written.connect(self.capture_log)
+
+        # Store logs
+        self.path_planning_logs = []
+        self.vision_logs = []
+        self.sim_logs = []
+
+        # Reference to debug window
+        self.debug_window = None
 
         # Set up field visualization
         self.field_widget = FieldVisualization()
@@ -51,16 +69,33 @@ class SSLClientWindow(QMainWindow):
         self.setup_checkboxes()
         self.setup_division_selector()
 
-        # Connect A* visualization checkbox - ADD THIS HERE
+        # Connect A* visualization checkbox
         self.aestrela_checkbox = self.findChild(QCheckBox, "aestrela_checkbox")
         if self.aestrela_checkbox:
             self.aestrela_checkbox.toggled.connect(self.update_visualization_settings)
+
+        # Connect the debug action in menu
+        self.actionPathing_Debug.triggered.connect(self.show_debug_window)
 
         # Setup timer for regular updates if game is provided
         if self.game:
             self.update_timer = QTimer()
             self.update_timer.timeout.connect(self.update_display)
             self.update_timer.start(16)  # ~60 FPS
+
+        # Store original stdout for restoration
+        self.original_stdout = sys.stdout
+
+        # Set up stdout redirection
+        try:
+            self.stdout_redirector = DebugStreamRedirector(
+                self.original_stdout
+            )
+            sys.stdout = self.stdout_redirector
+            self.stdout_redirector.text_written.connect(self.capture_log)
+        except Exception as e:
+            print(f"Warning: Could not set up stdout redirection: {e}")
+            self.stdout_redirector = None
 
     # Add this method to your class
     def update_visualization_settings(self):
@@ -152,8 +187,18 @@ class SSLClientWindow(QMainWindow):
                     status_label.setText(f"Robot {robot_id} ({role}): {state}")
 
     def closeEvent(self, event):
-        if self.game:
-            self.game.stop()
+        """Handle window close event"""
+        # Restore original stdout
+        if hasattr(self, "stdout_redirector") and self.stdout_redirector:
+            self.stdout_redirector.deactivate()
+            if hasattr(self, "original_stdout"):
+                sys.stdout = self.original_stdout
+
+        # Close debug window if it exists
+        if self.debug_window and self.debug_window.isVisible():
+            self.debug_window.close()
+
+        # Accept the close event
         event.accept()
 
     def setup_menu_actions(self):
@@ -545,3 +590,54 @@ class SSLClientWindow(QMainWindow):
         if hasattr(self, "field_widget"):
             initial_division = self.division_combo.currentText()
             self.handle_division_change(initial_division)
+
+    def capture_log(self, text):
+        """Capture logs and categorize them"""
+        if (
+            "Path" in text
+            or "path" in text
+            or "obstacles" in text
+            or "waypoint" in text
+        ):
+            self.path_planning_logs.append(text)
+            # Limit log size
+            if len(self.path_planning_logs) > 500:
+                self.path_planning_logs = self.path_planning_logs[-500:]
+
+        elif "Vision" in text or "vision" in text or "Ball" in text or "robot" in text:
+            self.vision_logs.append(text)
+            if len(self.vision_logs) > 500:
+                self.vision_logs = self.vision_logs[-500:]
+
+        elif "Sim" in text or "controller" in text or "command" in text:
+            self.sim_logs.append(text)
+            if len(self.sim_logs) > 500:
+                self.sim_logs = self.sim_logs[-500:]
+
+    def show_debug_window(self):
+        """Show the debug window when the debug action is triggered"""
+        if self.debug_window is None or not self.debug_window.isVisible():
+            self.debug_window = DebugWindow(parent=self, game=self.game)
+
+        # Show the window and bring to front
+        self.debug_window.show()
+        self.debug_window.raise_()
+        self.debug_window.activateWindow()
+
+    def update_visualization_settings(self, checked):
+        """Update visualization settings based on A* checkbox"""
+        if hasattr(self.field_widget, "set_show_paths"):
+            self.field_widget.set_show_paths(checked)
+        else:
+            print("Field widget does not have set_show_paths method")
+
+    def show_debug_window(self):
+        """Show the debug window as a separate window"""
+        if self.debug_window is None or not self.debug_window.isVisible():
+            # Create as a standalone window (no parent)
+            self.debug_window = DebugWindow(parent=None, game=self.game)
+
+        # Show the window and bring to front
+        self.debug_window.show()
+        self.debug_window.raise_()
+        self.debug_window.activateWindow()

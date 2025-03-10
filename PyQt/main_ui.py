@@ -229,8 +229,11 @@ class Ui_MainWindow(object):
         MainWindow.setStatusBar(self.statusbar)
         self.actionAbrir = QtWidgets.QAction(MainWindow)
         self.actionAbrir.setObjectName("actionAbrir")
+        self.actionPathing_Debug = QtWidgets.QAction(MainWindow)
+        self.actionPathing_Debug.setObjectName("actionPathing_Debug")
         self.menuConfigura_es_de_Porta.addSeparator()
         self.menuConfigura_es_de_Porta.addAction(self.actionAbrir)
+        self.menuConfigura_es_de_Porta.addAction(self.actionPathing_Debug)
         self.menubar.addAction(self.menuConfigura_es_de_Porta.menuAction())
 
         self.retranslateUi(MainWindow)
@@ -282,3 +285,4 @@ class Ui_MainWindow(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), _translate("MainWindow", "Posicionamento testes"))
         self.menuConfigura_es_de_Porta.setTitle(_translate("MainWindow", "Configurações"))
         self.actionAbrir.setText(_translate("MainWindow", "Configurar IPS"))
+        self.actionPathing_Debug.setText(_translate("MainWindow", "Debug"))
