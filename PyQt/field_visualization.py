@@ -52,7 +52,8 @@ class FieldVisualization(QFrame):
         self.yellow_robots = {}
         self.ball = None
         self.blue_visible = True
-        self.yellow_visible = True
+        self.yellow_visible = True  # Default visibility settings
+        self.paths = {}  # initialize the paths dictionary
 
         # Add division-specific dimensions
         self.divisions = {
@@ -92,14 +93,21 @@ class FieldVisualization(QFrame):
         self.resizeEvent(None)
 
         # PathPlanner
-        self.show_paths = False
-        self.paths = {}  # robot_id -> path
+        self._show_paths = False
 
     def set_show_paths(self, show: bool):
         """Enable/disable path visualization"""
-        self.show_paths = show
-        if hasattr(self, "scene"):
-            self.scene.update()
+        try:
+            if self._show_paths != show:  # Only update if value is changing
+                self._show_paths = show
+                print(f"A* visualization: {'enabled' if show else 'disabled'}")
+
+                # Force a complete redraw of the field when toggling paths
+                self.setup_field()
+
+            # Don't call scene.update() as it's not sufficient - we need full redraw
+        except Exception as e:
+            print(f"Error setting show paths: {e}")
 
     def resizeEvent(self, event):
         """Handle resize events"""
@@ -242,9 +250,12 @@ class FieldVisualization(QFrame):
             self.scale_factor_y = self.viz_height / dims["field_height"]
 
             # Draw paths if enabled - improved error handling
-            if getattr(self, "show_paths", False):
+            if getattr(self, "_show_paths", False) and hasattr(self, "paths"):
                 try:
-                    for robot_id, path in self.paths.items():
+                    # Create a copy of the paths dictionary to avoid modification during iteration
+                    paths_to_draw = dict(self.paths)
+
+                    for robot_id, path in paths_to_draw.items():
                         if not path or len(path) < 2:
                             continue
 
@@ -257,15 +268,22 @@ class FieldVisualization(QFrame):
                         )
                         path_pen = QPen(path_color, 2, Qt.DashLine)
 
-                        # Draw path segments
+                        # We'll draw all path segments as separate lines
                         for i in range(len(path) - 1):
                             try:
+                                # Get coordinates with extra validation
+                                if i >= len(path) or i + 1 >= len(path):
+                                    continue
+
+                                # Convert to scene coordinates
                                 start_x, start_y = self.scale_coordinates(
                                     path[i][0], path[i][1]
                                 )
                                 end_x, end_y = self.scale_coordinates(
                                     path[i + 1][0], path[i + 1][1]
                                 )
+
+                                # Add the line to the scene
                                 self.scene.addLine(
                                     start_x, start_y, end_x, end_y, path_pen
                                 )
@@ -274,6 +292,7 @@ class FieldVisualization(QFrame):
                                 continue
                 except Exception as e:
                     print(f"Error drawing paths: {e}")
+                    # Continue setting up the field even if path drawing fails
 
             # Fit view to scene
             self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -295,131 +314,112 @@ class FieldVisualization(QFrame):
                 self.update_path(robot_id, path)
 
             # Set show_paths flag to true
-            self.show_paths = True
+            self._show_paths = True
 
             # Redraw the field with paths enabled
             self.setup_field()
 
         except Exception as e:
             print(f"Error showing paths: {e}")
-            # Continue without crashing
-
-    def scale_coordinates(self, x, y, clamp=True):
-        """Convert SSL coordinates (meters) to visualization coordinates (pixels)"""
-        dims = self.divisions[self.current_division]
-
-        if clamp:
-            # Field boundaries check (only clamp if requested)
-            x = max(-dims["field_width"] / 2, min(dims["field_width"] / 2, x))
-            y = max(-dims["field_height"] / 2, min(dims["field_height"] / 2, y))
-
-        # Scale and translate coordinates
-        scaled_x = (x + dims["field_width"] / 2) * (
-            self.viz_width / dims["field_width"]
-        )
-        scaled_y = (-y + dims["field_height"] / 2) * (
-            self.viz_height / dims["field_height"]
-        )
-        return scaled_x, scaled_y
-
-    def update_path(self, robot_id: int, path: List[Tuple[float, float]]):
-        """Update stored path for a robot"""
-        try:
-            if path is None or len(path) < 2:
-                # No valid path to display
-                if robot_id in self.paths:
-                    del self.paths[robot_id]
-                return
-
-            # Store the path
-            self.paths[robot_id] = path
-
-            # Only force redraw if paths are visible
-            if getattr(self, "show_paths", False):
-                self.setup_field()
-
-        except Exception as e:
-            print(f"Error updating path for robot {robot_id}: {e}")
 
     def update_robot(self, x, y, orientation, team_color, robot_id):
         """Update or add robot position"""
-        robot_size = min(self.viz_width, self.viz_height) * 0.05
-        scaled_x, scaled_y = self.scale_coordinates(
-            x, y, clamp=False
-        )  # Don't clamp robots
+        try:
+            robot_size = min(self.viz_width, self.viz_height) * 0.05
+            scaled_x, scaled_y = self.scale_coordinates(
+                x, y, clamp=False
+            )  # Don't clamp robots
 
-        # Check if robot is within field boundaries
-        dims = self.divisions[self.current_division]
+            # Check if robot is within field boundaries
+            dims = self.divisions[self.current_division]
 
-        # Different bounds check based on division
-        if self.current_division == "Entry Level":
-            is_inside = (-dims["field_width"] / 2 <= x <= dims["field_width"] / 2) and (
-                -dims["field_height"] / 2 <= y <= dims["field_height"] / 2
-            )
-            # Check if robot is within our extended visualization bounds
-            is_visible = (self.el_bounds["x_min"] <= x <= self.el_bounds["x_max"]) and (
-                self.el_bounds["y_min"] <= y <= self.el_bounds["y_max"]
-            )
-        else:
-            is_inside = (-dims["field_width"] / 2 <= x <= dims["field_width"] / 2) and (
-                -dims["field_height"] / 2 <= y <= dims["field_height"] / 2
-            )
-            is_visible = True
-
-        # Remove old robot graphics if they exist
-        robot_items = self.blue_robots if team_color == Qt.blue else self.yellow_robots
-        if robot_id in robot_items:
-            old_robot, old_line, old_text = robot_items[robot_id]
-            self.scene.removeItem(old_robot)
-            self.scene.removeItem(old_line)
-            self.scene.removeItem(old_text)
-
-        # Only create robot if it's within visible bounds
-        if is_visible:
-            # Create robot with opacity based on position
-            robot_rect = QRectF(
-                scaled_x - robot_size / 2,
-                scaled_y - robot_size / 2,
-                robot_size,
-                robot_size,
-            )
-
-            # Create robot with different appearance when outside field
-            robot = self.scene.addEllipse(robot_rect, QPen(Qt.black))
-            if is_inside:
-                robot.setBrush(QBrush(team_color))
+            # Different bounds check based on division
+            if self.current_division == "Entry Level":
+                is_inside = (
+                    -dims["field_width"] / 2 <= x <= dims["field_width"] / 2
+                ) and (-dims["field_height"] / 2 <= y <= dims["field_height"] / 2)
+                # Check if robot is within our extended visualization bounds
+                is_visible = (
+                    self.el_bounds["x_min"] <= x <= self.el_bounds["x_max"]
+                ) and (self.el_bounds["y_min"] <= y <= self.el_bounds["y_max"])
             else:
-                # Create a semi-transparent version of the team color for out-of-field robots
-                out_color = QColor(team_color)
-                out_color.setAlpha(128)  # 50% transparency
-                robot.setBrush(QBrush(out_color))
+                is_inside = (
+                    -dims["field_width"] / 2 <= x <= dims["field_width"] / 2
+                ) and (-dims["field_height"] / 2 <= y <= dims["field_height"] / 2)
+                is_visible = True
 
-            # Add direction indicator
-            line_length = robot_size / 2
-            end_x = scaled_x + line_length * math.cos(orientation)
-            end_y = scaled_y + line_length * math.sin(orientation)
-            line = self.scene.addLine(
-                QLineF(scaled_x, scaled_y, end_x, end_y), QPen(Qt.black, 2)
+            # Remove old robot graphics if they exist
+            robot_items = (
+                self.blue_robots if team_color == Qt.blue else self.yellow_robots
             )
+            if robot_id in robot_items:
+                try:
+                    old_robot, old_line, old_text = robot_items[robot_id]
 
-            # Add ID text
-            text = self.scene.addText(str(robot_id))
-            text.setDefaultTextColor(Qt.black)
-            text.setPos(
-                scaled_x - text.boundingRect().width() / 2,
-                scaled_y - text.boundingRect().height() / 2,
-            )
+                    # Check if items still exist and belong to this scene
+                    if old_robot and old_robot.scene() == self.scene:
+                        self.scene.removeItem(old_robot)
+                    if old_line and old_line.scene() == self.scene:
+                        self.scene.removeItem(old_line)
+                    if old_text and old_text.scene() == self.scene:
+                        self.scene.removeItem(old_text)
 
-            # Store new robot items
-            robot_items[robot_id] = (robot, line, text)
+                    # Delete reference to old items
+                    del robot_items[robot_id]
+                except Exception as e:
+                    print(f"Error removing old robot {robot_id}: {e}")
+                    # Delete reference to potentially invalid items
+                    if robot_id in robot_items:
+                        del robot_items[robot_id]
 
-            # Apply current visibility settings
-            visible = (
-                self.blue_visible if team_color == Qt.blue else self.yellow_visible
-            )
-            robot.setVisible(visible)
-            line.setVisible(visible)
-            text.setVisible(visible)
+            # Only create robot if it's within visible bounds
+            if is_visible:
+                # Create robot with opacity based on position
+                robot_rect = QRectF(
+                    scaled_x - robot_size / 2,
+                    scaled_y - robot_size / 2,
+                    robot_size,
+                    robot_size,
+                )
+
+                # Create robot with different appearance when outside field
+                robot = self.scene.addEllipse(robot_rect, QPen(Qt.black))
+                if is_inside:
+                    robot.setBrush(QBrush(team_color))
+                else:
+                    # Create a semi-transparent version of the team color for out-of-field robots
+                    out_color = QColor(team_color)
+                    out_color.setAlpha(128)  # 50% transparency
+                    robot.setBrush(QBrush(out_color))
+
+                # Add direction indicator
+                line_length = robot_size / 2
+                end_x = scaled_x + line_length * math.cos(orientation)
+                end_y = scaled_y + line_length * math.sin(orientation)
+                line = self.scene.addLine(
+                    QLineF(scaled_x, scaled_y, end_x, end_y), QPen(Qt.black, 2)
+                )
+
+                # Add ID text
+                text = self.scene.addText(str(robot_id))
+                text.setDefaultTextColor(Qt.black)
+                text.setPos(
+                    scaled_x - text.boundingRect().width() / 2,
+                    scaled_y - text.boundingRect().height() / 2,
+                )
+
+                # Store new robot items
+                robot_items[robot_id] = (robot, line, text)
+
+                # Apply current visibility settings
+                visible = (
+                    self.blue_visible if team_color == Qt.blue else self.yellow_visible
+                )
+                robot.setVisible(visible)
+                line.setVisible(visible)
+                text.setVisible(visible)
+        except Exception as e:
+            print(f"Error in update_robot: {e}")
 
     def update_ball(self, x, y):
         """Update ball position with out-of-field visualization"""
@@ -454,6 +454,40 @@ class FieldVisualization(QFrame):
         )
         self.ball = self.scene.addEllipse(ball_rect, QPen(Qt.black), QBrush(ball_color))
 
+    def update_path(self, robot_id: int, path: List[Tuple[float, float]]):
+        """Update stored path for a robot"""
+        try:
+            if path is None or len(path) < 2:
+                # No valid path to display, remove existing path
+                if robot_id in self.paths:
+                    del self.paths[robot_id]
+                return
+
+            # Store the path - make a copy to avoid external modifications
+            self.paths[robot_id] = list(path)
+
+            # Don't trigger redraw automatically - let setup_field handle it
+        except Exception as e:
+            print(f"Error updating path for robot {robot_id}: {e}")
+
+    def scale_coordinates(self, x, y, clamp=True):
+        """Convert SSL coordinates (meters) to visualization coordinates (pixels)"""
+        dims = self.divisions[self.current_division]
+
+        if clamp:
+            # Field boundaries check (only clamp if requested)
+            x = max(-dims["field_width"] / 2, min(dims["field_width"] / 2, x))
+            y = max(-dims["field_height"] / 2, min(dims["field_height"] / 2, y))
+
+        # Scale and translate coordinates
+        scaled_x = (x + dims["field_width"] / 2) * (
+            self.viz_width / dims["field_width"]
+        )
+        scaled_y = (-y + dims["field_height"] / 2) * (
+            self.viz_height / dims["field_height"]
+        )
+        return scaled_x, scaled_y
+
     def set_team_visibility(self, blue_visible=True, yellow_visible=True):
         """Set visibility of teams"""
         self.blue_visible = blue_visible
@@ -472,48 +506,71 @@ class FieldVisualization(QFrame):
 
     def set_division(self, division):
         """Update field dimensions when division changes"""
-        if division in self.divisions:
-            # Clear everything first
-            self.scene.clear()  # Removes ALL items from the scene
+        try:
+            if division in self.divisions:
+                # Clear any existing items safely
+                self.clear_safely()
 
-            # Reset tracking dictionaries
-            self.blue_robots.clear()
-            self.yellow_robots.clear()
-            self.ball = None
+                # Reset the scene
+                self.scene.clear()  # Removes ALL items from the scene
 
-            # Reinitialize the current division
-            self.current_division = division
+                # Reset tracking dictionaries again for safety
+                self.blue_robots.clear()
+                self.yellow_robots.clear()
+                self.ball = None
+                self.paths.clear()  # Also clear paths
 
-            # Recreate the field setup
-            self.setup_field()
+                # Reinitialize the current division
+                self.current_division = division
+
+                # Recreate the field setup
+                self.setup_field()
+        except Exception as e:
+            print(f"Error setting division: {e}")
 
     def clear_safely(self):
         """Completely clear all robots and ball from visualization"""
         try:
             # Remove all blue robots
             for robot_id in list(self.blue_robots.keys()):
-                if robot_id in self.blue_robots:
-                    robot, line, text = self.blue_robots[robot_id]
-                    self.scene.removeItem(robot)
-                    self.scene.removeItem(line)
-                    self.scene.removeItem(text)
+                try:
+                    if robot_id in self.blue_robots:
+                        robot, line, text = self.blue_robots[robot_id]
+                        if robot and robot.scene() == self.scene:
+                            self.scene.removeItem(robot)
+                        if line and line.scene() == self.scene:
+                            self.scene.removeItem(line)
+                        if text and text.scene() == self.scene:
+                            self.scene.removeItem(text)
+                except Exception as e:
+                    print(f"Error removing blue robot {robot_id}: {e}")
 
             # Remove all yellow robots
             for robot_id in list(self.yellow_robots.keys()):
-                if robot_id in self.yellow_robots:
-                    robot, line, text = self.yellow_robots[robot_id]
-                    self.scene.removeItem(robot)
-                    self.scene.removeItem(line)
-                    self.scene.removeItem(text)
+                try:
+                    if robot_id in self.yellow_robots:
+                        robot, line, text = self.yellow_robots[robot_id]
+                        if robot and robot.scene() == self.scene:
+                            self.scene.removeItem(robot)
+                        if line and line.scene() == self.scene:
+                            self.scene.removeItem(line)
+                        if text and text.scene() == self.scene:
+                            self.scene.removeItem(text)
+                except Exception as e:
+                    print(f"Error removing yellow robot {robot_id}: {e}")
 
             # Remove ball
-            if self.ball:
-                self.scene.removeItem(self.ball)
+            try:
+                if self.ball and self.ball.scene() == self.scene:
+                    self.scene.removeItem(self.ball)
+            except Exception as e:
+                print(f"Error removing ball: {e}")
 
             # Clear dictionaries
             self.blue_robots.clear()
             self.yellow_robots.clear()
             self.ball = None
+            self.paths.clear()  # Also clear paths
 
         except Exception as e:
             print(f"Error during clear_safely: {e}")

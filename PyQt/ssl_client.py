@@ -88,20 +88,12 @@ class SSLClientWindow(QMainWindow):
 
         # Set up stdout redirection
         try:
-            self.stdout_redirector = DebugStreamRedirector(
-                self.original_stdout
-            )
+            self.stdout_redirector = DebugStreamRedirector(self.original_stdout)
             sys.stdout = self.stdout_redirector
             self.stdout_redirector.text_written.connect(self.capture_log)
         except Exception as e:
             print(f"Warning: Could not set up stdout redirection: {e}")
             self.stdout_redirector = None
-
-    # Add this method to your class
-    def update_visualization_settings(self):
-        """Update visualization settings based on checkboxes"""
-        if hasattr(self, "field_widget"):
-            self.field_widget.set_show_paths(self.aestrela_checkbox.isChecked())
 
     def update_display(self):
         """Update field display with latest game data"""
@@ -626,10 +618,14 @@ class SSLClientWindow(QMainWindow):
 
     def update_visualization_settings(self, checked):
         """Update visualization settings based on A* checkbox"""
-        if hasattr(self.field_widget, "set_show_paths"):
-            self.field_widget.set_show_paths(checked)
-        else:
-            print("Field widget does not have set_show_paths method")
+        try:
+            # This will force a complete redraw
+            if hasattr(self.field_widget, "set_show_paths"):
+                self.field_widget.set_show_paths(checked)
+            else:
+                print("Field widget does not have set_show_paths method")
+        except Exception as e:
+            print(f"Error updating visualization settings: {e}")
 
     def show_debug_window(self):
         """Show the debug window as a separate window"""

@@ -18,23 +18,26 @@ class PathFollower:
     ) -> Tuple[float, float]:
         """Get target point along path based on lookahead distance"""
         if not path:
-            print("WARNING: Empty path provided to PathFollower")
+            print("WARNING: Empty path provided to PathFollower")  # Not guarded
             return current_pos
 
         # If we're close to the end, return the end point
         end_distance = self._distance(current_pos, path[-1])
         if end_distance < self.lookahead_distance:
-            print(f"Close to end point ({end_distance:.2f}m), targeting end directly")
+            print(
+                f"Close to end point ({end_distance:.2f}m), targeting end directly"
+            )  # Not guarded
             return path[-1]
 
         # Find the point along the path that's approximately lookahead_distance away
         for i in range(len(path)):
             if self._distance(current_pos, path[i]) >= self.lookahead_distance:
-                print(f"Found lookahead point at index {i} in path")
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(f"Found lookahead point at index {i} in path")  # Not guarded
                 return path[i]
 
         # Default to last point
-        print("No suitable point found, using last path point")
+        print("No suitable point found, using last path point")  # Not guarded
         return path[-1]
 
     def _distance(
@@ -98,6 +101,7 @@ class RobotStateMachine:
 
     def _decide_next_action(self, vision_data: Dict):
         """Robot decision making"""
+        # Replace direct prints:
         # print(f"Attacker {self.robot_id} decision making...")
 
         # With conditional prints:
@@ -248,7 +252,10 @@ class RobotStateMachine:
         else:
             # Fallback to direct movement if no path is available
             if self.target_position:
-                print(f"No path found for robot {self.robot_id}, using direct movement")
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"No path found for robot {self.robot_id}, using direct movement"
+                    )
                 self._move_to_point(
                     current_pos, current_orientation, self.target_position
                 )
@@ -290,24 +297,6 @@ class RobotStateMachine:
         controller.send_global_velocity(
             self.robot_id, velocity_x, velocity_y, angular_velocity
         )
-
-    def _follow_path(self):
-        """Follow the computed path using the path follower"""
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            return
-
-        # Get the latest path from the path planner
-        path = self.game.path_planner.get_path(self.robot_id)
-
-        if path and len(path) > 0:
-            # Get target point from path follower
-            target_point = self.path_follower.get_target_point(current_pos, path)
-
-            if DEBUG_ROBOT_BEHAVIOR:
-                print(
-                    f"Found lookahead point at index {path.index(target_point) if target_point in path else 'N/A'} in path"
-                )
 
 
 class GoalkeeperStateMachine(RobotStateMachine):
@@ -450,12 +439,14 @@ class AttackerStateMachine(RobotStateMachine):
         # Threshold for considering ball close enough to own
         self.ball_ownership_threshold = 0.2
         # For debug logging
-        print(f"Initialized Attacker (ID: {robot_id}, Team: {team_color})")
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(f"Initialized Attacker (ID: {robot_id}, Team: {team_color})")
 
     def _decide_next_action(self, vision_data: Dict):
         """Attacker decision making logic"""
         # Print debug info for this frame
-        print(f"\nAttacker {self.robot_id} decision making...")
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(f"\nAttacker {self.robot_id} decision making...")
 
         if not vision_data or "ball" not in vision_data:
             self.current_state = RobotState.RETURNING
@@ -480,10 +471,11 @@ class AttackerStateMachine(RobotStateMachine):
             (current_pos[0] - ball["x"]) ** 2 + (current_pos[1] - ball["y"]) ** 2
         ) ** 0.5
 
-        print(
-            f"Ball at ({ball['x']:.2f}, {ball['y']:.2f}), distance: {distance_to_ball:.2f}"
-        )
-        print(f"Current position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"Ball at ({ball['x']:.2f}, {ball['y']:.2f}), distance: {distance_to_ball:.2f}"
+            )
+            print(f"Current position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
 
         # Decide what to do based on situation
         if distance_to_ball < self.ball_ownership_threshold:
@@ -491,14 +483,19 @@ class AttackerStateMachine(RobotStateMachine):
             self.current_state = RobotState.ATTACKING
             attack_pos = self._calculate_attack_position(ball)
             self.target_position = attack_pos
-            print(f"Ball owned. ATTACKING towards {attack_pos}")
+
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Ball owned. ATTACKING towards {attack_pos}")
+
             self.game.path_planner.request_path(self.robot_id, current_pos, attack_pos)
 
         elif self._should_go_to_ball(ball):
             # Go to ball
             self.current_state = RobotState.MOVING_TO_BALL
             self.target_position = (ball["x"], ball["y"])
-            print(f"Going to ball at {self.target_position}")
+
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Going to ball at {self.target_position}")
             self.game.path_planner.request_path(
                 self.robot_id, current_pos, (ball["x"], ball["y"])
             )
@@ -508,7 +505,9 @@ class AttackerStateMachine(RobotStateMachine):
             self.current_state = RobotState.SUPPORTING
             support_pos = self._calculate_support_position(ball)
             self.target_position = support_pos
-            print(f"Taking support position at {support_pos}")
+
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Taking support position at {support_pos}")
             self.game.path_planner.request_path(self.robot_id, current_pos, support_pos)
 
         # After deciding and requesting path, actually follow it

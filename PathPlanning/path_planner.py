@@ -1,45 +1,88 @@
-# pathplanning/path_planner.py
-from threading import Thread, Lock
-from queue import Queue
+import threading
+import queue
 import time
-from typing import Dict, List, Tuple
-from .astar import AStar, DEBUG_PATH_PLANNING
-from .utils import inflate_obstacles
+import numpy as np
+from typing import Dict, List, Tuple, Set, Optional
+import math
 
 
-class PathPlanner(Thread):
+class PathPlanner(threading.Thread):
+    """
+    A threaded path planner that uses A* algorithm to find paths for robots
+    """
+
     def __init__(self, game):
+        """
+        Initialize the path planner thread
+
+        Args:
+            game: The game instance with access to vision data
+        """
         super().__init__()
-        self.daemon = True  # Make thread daemon so it exits with main
+        self.daemon = True  # Daemon threads exit when the main program exits
         self.game = game
-        self.astar = AStar()
+
+        # Thread control
         self.running = False
-        self.planning_queue = Queue()
-        self.paths: Dict[int, List[Tuple[float, float]]] = {}
-        self.paths_lock = Lock()
+        self.planning_lock = threading.Lock()
+        self.paths_lock = threading.Lock()
+
+        # Planning queue and results storage
+        self.planning_queue = queue.Queue()
+        self.paths = {}  # robot_id -> path
+
+        # Path planning parameters
+        self.resolution = 0.05  # Grid resolution in meters
+        self.inflation_radius = 0.15  # Robot radius + safety margin
+
+        # Debug
+        self.debug = game.debug.get("path_planning", False)
 
     def run(self):
-        """Main planning loop"""
+        """Main thread loop to process planning requests"""
         self.running = True
+
         while self.running:
             try:
-                if not self.planning_queue.empty():
-                    robot_id, start, goal = self.planning_queue.get_nowait()
-                    self._plan_path(robot_id, start, goal)
-                time.sleep(0.01)
+                # Get next planning request from queue (non-blocking)
+                try:
+                    robot_id, start, goal = self.planning_queue.get(block=False)
+
+                    # Plan path for this robot
+                    if self.debug:
+                        print(
+                            f"Planning path for robot {robot_id} from {start} to {goal}"
+                        )
+
+                    path = self._plan_path(robot_id, start, goal)
+
+                    # Store result
+                    with self.paths_lock:
+                        self.paths[robot_id] = path
+
+                    # Mark task as done
+                    self.planning_queue.task_done()
+
+                except queue.Empty:
+                    # No planning requests, sleep briefly
+                    time.sleep(0.005)  # 5ms
+
             except Exception as e:
-                print(
-                    f"Error in path planning: {e}"
-                )  # Keep this one - it's an error message
+                if self.debug:
+                    print(f"Error in path planning thread: {e}")
+                time.sleep(0.1)  # Recover from errors
 
     def stop(self):
-        """Stop the planning thread"""
-        if not self.running:
-            return
+        """Stop the planning thread safely"""
         self.running = False
         # Clear queue
         while not self.planning_queue.empty():
-            self.planning_queue.get_nowait()
+            try:
+                self.planning_queue.get_nowait()
+                self.planning_queue.task_done()
+            except queue.Empty:
+                break
+
         # Wait for thread to finish
         if self.is_alive():
             self.join(timeout=1.0)
@@ -47,157 +90,412 @@ class PathPlanner(Thread):
     def request_path(
         self, robot_id: int, start: Tuple[float, float], goal: Tuple[float, float]
     ):
-        """Request a new path to be planned"""
+        """
+        Request a path to be planned
+
+        Args:
+            robot_id: ID of the robot
+            start: Starting position (x, y)
+            goal: Goal position (x, y)
+        """
+        # Validate input
+        if not self._is_valid_position(start) or not self._is_valid_position(goal):
+            if self.debug:
+                print(f"Invalid start or goal position: {start} -> {goal}")
+            return
+
+        # Add to planning queue
         self.planning_queue.put((robot_id, start, goal))
 
     def get_path(self, robot_id: int) -> List[Tuple[float, float]]:
-        """Get the currently planned path for a robot"""
+        """
+        Get the currently planned path for a robot
+
+        Args:
+            robot_id: ID of the robot
+
+        Returns:
+            List of (x, y) waypoints or empty list if no path
+        """
         with self.paths_lock:
-            path = self.paths.get(robot_id, [])
+            return self.paths.get(robot_id, [])
 
-        # If field visualization is available and has show_paths attribute
-        if hasattr(self.game, "window") and self.game.window:
-            try:
-                # Try to update path visualization if the method exists
-                if hasattr(self.game.window, "update_path_visualization"):
-                    self.game.window.update_path_visualization(robot_id, path)
-            except Exception as e:
-                # Silently ignore visualization errors (don't crash robot control!)
-                pass
+    def _is_valid_position(self, pos: Tuple[float, float]) -> bool:
+        """
+        Check if a position is valid (within field bounds and not None)
 
-        return path
+        Args:
+            pos: Position to check (x, y)
+
+        Returns:
+            True if position is valid
+        """
+        if pos is None or len(pos) != 2:
+            return False
+
+        x, y = pos
+        if x is None or y is None or math.isnan(x) or math.isnan(y):
+            return False
+
+        # Check if within field bounds with some margin
+        bounds = self.game.field_bounds
+        margin = 0.1  # 10cm margin
+
+        return (
+            bounds["x_min"] - margin <= x <= bounds["x_max"] + margin
+            and bounds["y_min"] - margin <= y <= bounds["y_max"] + margin
+        )
 
     def _plan_path(
         self, robot_id: int, start: Tuple[float, float], goal: Tuple[float, float]
-    ):
-        """Plan path for a single robot"""
-        if DEBUG_PATH_PLANNING:
-            print(f"\nPlanning path for robot {robot_id} from {start} to {goal}")
+    ) -> List[Tuple[float, float]]:
+        """Plan a path using A* algorithm"""
+        # Start timing
+        start_time = time.time()
 
-        # Get current vision data
+        # Get vision data to extract obstacles
         vision_data = self.game.get_vision_data()
         if not vision_data:
-            if DEBUG_PATH_PLANNING:
-                print("No vision data available. Cannot plan path.")
-            return
+            # No vision data, return direct path
+            return [start, goal]
 
-        # Create obstacle set from other robots
+        # Extract obstacles from other robots
+        obstacles = self._get_obstacles(vision_data, robot_id)
+
+        # If no obstacles or close enough, return direct path
+        if not obstacles or self._euclidean_distance(start, goal) < 0.3:
+            if self.debug:
+                print(
+                    f"Direct path for robot {robot_id}: {len(obstacles)} obstacles, distance={self._euclidean_distance(start, goal):.2f}m"
+                )
+            return [start, goal]
+
+        # Run A* algorithm
+        path = self._astar(start, goal, obstacles)
+
+        # If path couldn't be found, return direct path
+        if not path:
+            if self.debug:
+                print(f"No path found for robot {robot_id}, using direct path")
+            return [start, goal]
+
+        # Post-process path to smooth it
+        smoothed_path = self._smooth_path(path)
+
+        # Calculate and log planning time
+        planning_time = time.time() - start_time
+        if self.debug:
+            print(
+                f"Path planning for robot {robot_id} took {planning_time*1000:.2f}ms: {len(path)} points → {len(smoothed_path)} after smoothing"
+            )
+
+        return smoothed_path
+
+    def _get_obstacles(
+        self, vision_data: Dict, robot_id: int
+    ) -> Set[Tuple[float, float]]:
+        """
+        Extract obstacles from vision data
+
+        Args:
+            vision_data: Vision data from SSL-Vision
+            robot_id: ID of the robot for which we're planning
+
+        Returns:
+            Set of (x, y) obstacle positions
+        """
         obstacles = set()
+
+        # Extract all robots except the one we're planning for
         for team in ["robotsBlue", "robotsYellow"]:
-            for rid, robot in vision_data[team].items():
-                if robot["x"] is not None and rid != robot_id:
-                    obstacles.add((robot["x"], robot["y"]))
-                    if DEBUG_PATH_PLANNING:
-                        print(
-                            f"Added obstacle at ({robot['x']}, {robot['y']}) from "
-                            f"{team} robot {rid}"
-                        )
+            for rid, robot in vision_data.get(team, {}).items():
+                # Skip if robot is not detected or is the planning robot
+                if robot["x"] is None or int(rid) == robot_id:
+                    continue
+
+                # Add robot position to obstacles
+                obstacles.add((robot["x"], robot["y"]))
 
         # Inflate obstacles
-        inflation_radius = 0.15  # Robot radius + safety margin
-        if DEBUG_PATH_PLANNING:
-            print(f"Inflating obstacles with radius {inflation_radius}")
-        inflated_obstacles = inflate_obstacles(
-            obstacles,
-            inflation_radius,
-            resolution=0.05,
-            field_bounds=self.game.field_bounds,
-        )
-        if DEBUG_PATH_PLANNING:
-            print(f"Total inflated obstacles: {len(inflated_obstacles)}")
+        inflated_obstacles = self._inflate_obstacles(obstacles)
 
-        # Verify field bounds
-        if not self.game.field_bounds or "x_min" not in self.game.field_bounds:
-            # Use default field bounds for SSL-EL (from document)
-            self.game.field_bounds = {
-                "x_min": -2.25,
-                "x_max": 2.25,
-                "y_min": -1.5,
-                "y_max": 1.5,
-            }
+        return inflated_obstacles
 
-            if DEBUG_PATH_PLANNING:
-                print("ERROR: Field bounds not properly defined!")
-                print(f"Using default field bounds: {self.game.field_bounds}")
+    def _inflate_obstacles(
+        self, obstacles: Set[Tuple[float, float]]
+    ) -> Set[Tuple[float, float]]:
+        """
+        Inflate obstacles by the robot radius plus safety margin
 
-        # Check if start and goal are within bounds
-        is_start_valid = (
-            self.game.field_bounds["x_min"]
-            <= start[0]
-            <= self.game.field_bounds["x_max"]
-            and self.game.field_bounds["y_min"]
-            <= start[1]
-            <= self.game.field_bounds["y_max"]
-        )
-        is_goal_valid = (
-            self.game.field_bounds["x_min"]
-            <= goal[0]
-            <= self.game.field_bounds["x_max"]
-            and self.game.field_bounds["y_min"]
-            <= goal[1]
-            <= self.game.field_bounds["y_max"]
-        )
+        Args:
+            obstacles: Original obstacle positions
 
-        if not is_start_valid:
-            # MISSING DEBUG FLAG HERE
-            if DEBUG_PATH_PLANNING:
-                print(
-                    f"WARNING: Start position {start} outside field bounds {self.game.field_bounds}"
+        Returns:
+            Set of inflated obstacle positions
+        """
+        if not obstacles:
+            return set()
+
+        # Convert to numpy array for efficient operations
+        obstacle_array = np.array(list(obstacles))
+
+        # Create a grid of points around each obstacle
+        steps = int(self.inflation_radius / self.resolution)
+        inflated = set()
+
+        for x, y in obstacle_array:
+            for dx in range(-steps, steps + 1):
+                for dy in range(-steps, steps + 1):
+                    # Check if point is within inflation radius
+                    px = x + dx * self.resolution
+                    py = y + dy * self.resolution
+                    distance = math.sqrt(dx**2 + dy**2) * self.resolution
+
+                    if distance <= self.inflation_radius:
+                        # Add to inflated obstacles set
+                        inflated.add((round(px, 3), round(py, 3)))
+
+        return inflated
+
+    def _astar(
+        self,
+        start: Tuple[float, float],
+        goal: Tuple[float, float],
+        obstacles: Set[Tuple[float, float]],
+    ) -> List[Tuple[float, float]]:
+        """
+        A* pathfinding algorithm
+
+        Args:
+            start: Starting position (x, y)
+            goal: Goal position (x, y)
+            obstacles: Set of obstacle positions
+
+        Returns:
+            List of (x, y) waypoints
+        """
+        # A* implementation here
+        # For simplicity, I'll use the Node class and implement A* directly
+
+        class Node:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+                self.g = float("inf")  # Cost from start to this node
+                self.h = float("inf")  # Heuristic (estimated cost to goal)
+                self.f = float("inf")  # Total cost (g + h)
+                self.parent = None
+
+            def __eq__(self, other):
+                return self.x == other.x and self.y == other.y
+
+            def __lt__(self, other):
+                return self.f < other.f
+
+            def __hash__(self):
+                return hash((self.x, self.y))
+
+        # Round start and goal to grid resolution
+        start_x = round(start[0] / self.resolution) * self.resolution
+        start_y = round(start[1] / self.resolution) * self.resolution
+        goal_x = round(goal[0] / self.resolution) * self.resolution
+        goal_y = round(goal[1] / self.resolution) * self.resolution
+
+        # Create start and goal nodes
+        start_node = Node(start_x, start_y)
+        goal_node = Node(goal_x, goal_y)
+
+        # Initialize costs
+        start_node.g = 0
+        start_node.h = self._heuristic(start_node, goal_node)
+        start_node.f = start_node.g + start_node.h
+
+        # Initialize open and closed sets
+        open_set = [start_node]
+        closed_set = set()
+
+        # Define movement directions (8-connected grid)
+        directions = [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),  # Cardinal
+            (1, 1),
+            (-1, 1),
+            (1, -1),
+            (-1, -1),  # Diagonal
+        ]
+
+        # Main loop
+        while open_set:
+            # Get node with lowest f-cost
+            current = min(open_set, key=lambda n: n.f)
+
+            # Check if goal reached
+            if (
+                self._euclidean_distance(
+                    (current.x, current.y), (goal_node.x, goal_node.y)
                 )
-                # Adjust start position to be within bounds
-                start = (
-                    max(
-                        min(start[0], self.game.field_bounds["x_max"]),
-                        self.game.field_bounds["x_min"],
-                    ),
-                    max(
-                        min(start[1], self.game.field_bounds["y_max"]),
-                        self.game.field_bounds["y_min"],
-                    ),
+                < self.resolution
+            ):
+                # Reconstruct path
+                path = []
+                while current:
+                    path.append((current.x, current.y))
+                    current = current.parent
+                return path[::-1]  # Reverse path (start to goal)
+
+            # Move current from open to closed set
+            open_set.remove(current)
+            closed_set.add((current.x, current.y))
+
+            # Check neighbors
+            for dx, dy in directions:
+                # Calculate neighbor position
+                nx = current.x + dx * self.resolution
+                ny = current.y + dy * self.resolution
+
+                # Check if in closed set or is obstacle
+                if (nx, ny) in closed_set or self._is_obstacle((nx, ny), obstacles):
+                    continue
+
+                # Create neighbor node
+                neighbor = Node(nx, ny)
+
+                # Calculate g-cost (cost from start to neighbor through current)
+                move_cost = (
+                    self.resolution
+                    if abs(dx) + abs(dy) == 1
+                    else 1.414 * self.resolution
                 )
-                print(f"Adjusted start position to {start}")
+                tentative_g = current.g + move_cost
 
-        if not is_goal_valid:
-            # MISSING DEBUG FLAG HERE
-            if DEBUG_PATH_PLANNING:
-                print(
-                    f"WARNING: Goal position {goal} outside field bounds {self.game.field_bounds}"
-                )
-                # Adjust goal position to be within bounds
-                goal = (
-                    max(
-                        min(goal[0], self.game.field_bounds["x_max"]),
-                        self.game.field_bounds["x_min"],
-                    ),
-                    max(
-                        min(goal[1], self.game.field_bounds["y_max"]),
-                        self.game.field_bounds["y_min"],
-                    ),
-                )
-                print(f"Adjusted goal position to {goal}")
+                # Check if neighbor is in open set
+                existing = next((n for n in open_set if n == neighbor), None)
 
-        # Plan path
-        # MISSING DEBUG FLAG HERE
-        if DEBUG_PATH_PLANNING:
-            print(
-                f"Planning path from {start} to {goal} with field bounds {self.game.field_bounds}"
-            )
-        path = self.astar.find_path(
-            start, goal, self.game.field_bounds, inflated_obstacles
-        )
+                if existing is None:
+                    # Add to open set
+                    neighbor.g = tentative_g
+                    neighbor.h = self._heuristic(neighbor, goal_node)
+                    neighbor.f = neighbor.g + neighbor.h
+                    neighbor.parent = current
+                    open_set.append(neighbor)
+                elif tentative_g < existing.g:
+                    # Update existing neighbor
+                    existing.g = tentative_g
+                    existing.f = existing.g + existing.h
+                    existing.parent = current
 
-        if not path:
-            # MISSING DEBUG FLAG HERE
-            if DEBUG_PATH_PLANNING:
-                print(f"No path found for robot {robot_id}!")
-                # Generate a simple direct path as fallback
-                path = [start, goal]
-                print(f"Using direct path from {start} to {goal} as fallback")
-        else:
-            # MISSING DEBUG FLAG HERE
-            if DEBUG_PATH_PLANNING:
-                print(f"Path found with {len(path)} waypoints for robot {robot_id}")
+        # No path found
+        return []
 
-        # Store result
-        with self.paths_lock:
-            self.paths[robot_id] = path
+    def _smooth_path(
+        self, path: List[Tuple[float, float]]
+    ) -> List[Tuple[float, float]]:
+        """
+        Smooth the path by removing unnecessary waypoints
+
+        Args:
+            path: Original path
+
+        Returns:
+            Smoothed path
+        """
+        if len(path) <= 2:
+            return path
+
+        # Simple smoothing: keep only essential waypoints
+        smoothed = [path[0]]
+
+        for i in range(1, len(path) - 1):
+            prev_vec = (path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1])
+            next_vec = (path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1])
+
+            # Calculate angle between vectors
+            angle = self._angle_between(prev_vec, next_vec)
+
+            # Keep waypoint if angle is significant
+            if abs(angle) > 0.3:  # ~17 degrees
+                smoothed.append(path[i])
+
+        smoothed.append(path[-1])
+        return smoothed
+
+    def _heuristic(self, node: "Node", goal: "Node") -> float:
+        """
+        Heuristic function (Manhattan distance)
+
+        Args:
+            node: Current node
+            goal: Goal node
+
+        Returns:
+            Heuristic cost estimate
+        """
+        return abs(node.x - goal.x) + abs(node.y - goal.y)
+
+    def _is_obstacle(
+        self, pos: Tuple[float, float], obstacles: Set[Tuple[float, float]]
+    ) -> bool:
+        """
+        Check if position is an obstacle
+
+        Args:
+            pos: Position to check
+            obstacles: Set of obstacle positions
+
+        Returns:
+            True if position is an obstacle
+        """
+        # Check exact match
+        rounded_pos = (round(pos[0], 3), round(pos[1], 3))
+        if rounded_pos in obstacles:
+            return True
+
+        # Check nearby obstacles (within resolution)
+        for ox, oy in obstacles:
+            if self._euclidean_distance(pos, (ox, oy)) < self.resolution:
+                return True
+
+        return False
+
+    def _euclidean_distance(
+        self, p1: Tuple[float, float], p2: Tuple[float, float]
+    ) -> float:
+        """
+        Calculate Euclidean distance between two points
+
+        Args:
+            p1: First point
+            p2: Second point
+
+        Returns:
+            Euclidean distance
+        """
+        return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+
+    def _angle_between(self, v1: Tuple[float, float], v2: Tuple[float, float]) -> float:
+        """
+        Calculate angle between two vectors
+
+        Args:
+            v1: First vector
+            v2: Second vector
+
+        Returns:
+            Angle in radians
+        """
+        # Calculate dot product
+        dot = v1[0] * v2[0] + v1[1] * v2[1]
+
+        # Calculate magnitudes
+        mag1 = math.sqrt(v1[0] ** 2 + v1[1] ** 2)
+        mag2 = math.sqrt(v2[0] ** 2 + v2[1] ** 2)
+
+        # Calculate angle
+        cos_angle = dot / (mag1 * mag2) if mag1 * mag2 > 0 else 0
+
+        # Clamp value to valid range
+        cos_angle = max(-1.0, min(1.0, cos_angle))
+
+        return math.acos(cos_angle)
