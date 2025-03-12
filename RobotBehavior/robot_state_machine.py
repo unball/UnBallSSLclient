@@ -145,7 +145,6 @@ class RobotStateMachine:
         if self.current_state == RobotState.MOVING_TO_POSITION:
             current_pos = self._get_current_pos()
             if current_pos and self.target_position:
-                # Your existing path planning code already does this!
                 # Request path from planner (already queued in _decide_next_action)
                 path = self.game.path_planner.get_path(self.robot_id)
 

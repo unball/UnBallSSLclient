@@ -255,7 +255,7 @@ class Vision(threading.Thread):
 
     @staticmethod
     def process_frame(raw_frame, field_size, team_side, last_frame=None, ball_lp=False):
-        """Process vision frame placing the origin at the right edge of the field relative to your defending goal
+        """Process vision frame placing the origin at the right edge of the field relative the defending goal
 
         Args:
             raw_frame: Raw frame data from vision system

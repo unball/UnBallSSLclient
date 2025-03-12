@@ -1,15 +1,6 @@
-#!/usr/bin/env python3
-"""
-Sistema Cliente SSL para RoboCup - UnBall (Universidade de Brasília)
-"""
-
 import sys
 import warnings
 import os
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-os.environ["GTK_MODULES"] = ""
-
 import json
 import threading
 import time
@@ -19,6 +10,10 @@ import traceback
 from PyQt5 import QtWidgets, uic
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt, QTimer
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+os.environ["GTK_MODULES"] = ""
+
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -501,7 +496,6 @@ class Game:
             print(f"Error updating network settings: {e}")
             return False
 
-    # Add to your Game class in main.py
     def _initialize_robot_state_machines(self):
         """Initialize state machines for different robot roles"""
         self.robot_state_machines = {}

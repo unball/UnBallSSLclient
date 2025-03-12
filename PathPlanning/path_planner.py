@@ -275,7 +275,6 @@ class PathPlanner(threading.Thread):
             List of (x, y) waypoints
         """
         # A* implementation here
-        # For simplicity, I'll use the Node class and implement A* directly
 
         class Node:
             def __init__(self, x, y):
