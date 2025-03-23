@@ -1,5 +1,18 @@
 todo:
 
+# important
+
+- see why the robots arent following the path properly and why they only move when changing teams
+- see why the robots when moving just go away if they're very fast
+- não sei, socorro alguem me ajuda kk
+
+# important but not as much
+
+- review all the code and organize (can be done by ai)
+- review all the code and comment (can be done by ai)
+
+# ui and etc
+
 - Better update the screen when no vision data is received
 - Put the name of the teams in the Team A and Team B
 - Change the size of the window accordingly to the maximize button

@@ -107,14 +107,51 @@ class RobotStateMachine:
                 team_for_action = referee_data.get("team")
                 can_play = referee_data.get("can_play", False)
 
-                print(
-                    f"Robot {self.robot_id} update - Game state: {game_state}, Team: {team_for_action}, Can play: {can_play}"
-                )
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"Robot {self.robot_id} update - Game state: {game_state}, Team: {team_for_action}, Can play: {can_play}"
+                    )
+
+                # Check if we're in a pre-kickoff state
+                pre_kickoff_states = [
+                    "HALT",
+                    "STOP",
+                    "PREPARE_KICKOFF_BLUE",
+                    "PREPARE_KICKOFF_YELLOW",
+                ]
+                if game_state in pre_kickoff_states:
+                    # Get robot position
+                    current_pos = self._get_current_pos()
+                    if current_pos:
+                        # Define halfway line
+                        halfway_line = 0
+
+                        # Enforce robots to stay in their own half
+                        if self.team_color == "blue" and current_pos[0] > halfway_line:
+                            self.current_state = RobotState.RETURNING
+                            self.target_position = (-0.5, current_pos[1])
+                            self.game.path_planner.request_path(
+                                self.robot_id, current_pos, self.target_position
+                            )
+                            self._follow_path()
+                            return
+                        elif (
+                            self.team_color == "yellow"
+                            and current_pos[0] < halfway_line
+                        ):
+                            self.current_state = RobotState.RETURNING
+                            self.target_position = (0.5, current_pos[1])
+                            self.game.path_planner.request_path(
+                                self.robot_id, current_pos, self.target_position
+                            )
+                            self._follow_path()
+                            return
 
                 # Handle specific game states
                 if game_state == "HALT":
                     # Immediately stop robot
-                    print(f"Robot {self.robot_id}: HALT - Stopping immediately")
+                    if DEBUG_ROBOT_BEHAVIOR:
+                        print(f"Robot {self.robot_id}: HALT - Stopping immediately")
                     if hasattr(self.game, "active_controller"):
                         self.game.active_controller.send_global_velocity(
                             self.robot_id, 0, 0, 0
@@ -124,7 +161,8 @@ class RobotStateMachine:
 
                 elif game_state == "STOP":
                     # Can move but stay away from ball
-                    print(f"Robot {self.robot_id}: STOP - Moving away from ball")
+                    if DEBUG_ROBOT_BEHAVIOR:
+                        print(f"Robot {self.robot_id}: STOP - Moving away from ball")
                     self.current_state = RobotState.RETURNING
                     self.target_position = self.home_position
 
@@ -159,9 +197,10 @@ class RobotStateMachine:
                                     current_pos[0] + away_vector_x * 0.6,
                                     current_pos[1] + away_vector_y * 0.6,
                                 )
-                                print(
-                                    f"Robot {self.robot_id}: Moving away from ball to {self.target_position}"
-                                )
+                                if DEBUG_ROBOT_BEHAVIOR:
+                                    print(
+                                        f"Robot {self.robot_id}: Moving away from ball to {self.target_position}"
+                                    )
 
                     # Update path with new target
                     if current_pos and self.target_position:
@@ -185,13 +224,15 @@ class RobotStateMachine:
                     is_our_team_turn = team_for_action == self.team_color
 
                     if is_our_team_turn:
-                        print(f"Robot {self.robot_id}: {game_state} for our team")
+                        if DEBUG_ROBOT_BEHAVIOR:
+                            print(f"Robot {self.robot_id}: {game_state} for our team")
                         # Handle based on robot role (will be implemented in subclasses)
                         # Let normal decision logic run
                     else:
-                        print(
-                            f"Robot {self.robot_id}: {game_state} for opponent team - keeping distance"
-                        )
+                        if DEBUG_ROBOT_BEHAVIOR:
+                            print(
+                                f"Robot {self.robot_id}: {game_state} for opponent team - keeping distance"
+                            )
                         # We need to keep distance (0.5m) from ball during opponent's turn
                         self.current_state = RobotState.SUPPORTING
 
@@ -433,7 +474,7 @@ class RobotStateMachine:
         return (x, y)
 
     def _move_to_point(self, current_pos, current_orientation, target_point):
-        """Move to a target point with strict field boundary enforcement"""
+        """Move to a target point with velocity scaling based on curvature"""
         # Apply boundary enforcement to target point
         safe_target = self._enforce_field_boundaries(target_point)
 
@@ -451,9 +492,21 @@ class RobotStateMachine:
         max_speed = 1.0  # Maximum speed in m/s
         speed_factor = min(1.0, distance / 0.5)  # Slow down within 0.5m
 
+        # Add curvature-based speed scaling
+        # Calculate angle change required
+        angle_diff = abs(
+            self._normalize_angle(target_orientation - current_orientation)
+        )
+
+        # Scale speed based on angle change (more turning = slower speed)
+        curvature_factor = max(0.3, 1.0 - angle_diff / math.pi)
+
+        # Apply both scaling factors
+        final_speed_factor = min(speed_factor, curvature_factor)
+
         # Calculate velocities
-        velocity_x = dx * max_speed * speed_factor
-        velocity_y = dy * max_speed * speed_factor
+        velocity_x = dx * max_speed * final_speed_factor
+        velocity_y = dy * max_speed * final_speed_factor
 
         # Safety check: If robot is already at or beyond field boundary, prevent further movement in that direction
         if hasattr(self.game, "field_bounds"):
@@ -483,13 +536,7 @@ class RobotStateMachine:
                 velocity_y = 0  # Don't move further in positive y
 
         # Calculate angular velocity to align with target orientation
-        angle_diff = target_orientation - current_orientation
-        # Normalize angle to [-pi, pi]
-        while angle_diff > math.pi:
-            angle_diff -= 2 * math.pi
-        while angle_diff < -math.pi:
-            angle_diff += 2 * math.pi
-
+        angle_diff = self._normalize_angle(target_orientation - current_orientation)
         angular_velocity = angle_diff * 2.0  # Proportional control
 
         # Get appropriate controller from game context
@@ -499,6 +546,14 @@ class RobotStateMachine:
         controller.send_global_velocity(
             self.robot_id, velocity_x, velocity_y, angular_velocity
         )
+
+    def _normalize_angle(self, angle):
+        """Normalize angle to [-pi, pi]"""
+        while angle > math.pi:
+            angle -= 2 * math.pi
+        while angle < -math.pi:
+            angle += 2 * math.pi
+        return angle
 
 
 class GoalkeeperStateMachine(RobotStateMachine):
@@ -513,7 +568,8 @@ class GoalkeeperStateMachine(RobotStateMachine):
     def _decide_next_action(self, vision_data: Dict):
         """Goalkeeper decision making with game state awareness"""
         # Add debug logging
-        self.debug_robot_state(vision_data)
+        if DEBUG_ROBOT_BEHAVIOR:
+            self.debug_robot_state(vision_data)
 
         # Get referee data to check game state
         referee_data = self.game.get_referee_data()
