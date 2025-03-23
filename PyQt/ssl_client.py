@@ -69,6 +69,7 @@ class SSLClientWindow(QMainWindow):
         self.setup_control_buttons()
         self.setup_checkboxes()
         self.setup_division_selector()
+        self.setup_game_state_handling()
 
         # Connect A* visualization checkbox
         self.aestrela_checkbox = self.findChild(QCheckBox, "aestrela_checkbox")
@@ -182,32 +183,66 @@ class SSLClientWindow(QMainWindow):
         self.update_game_state_ui()
 
     def update_game_state_ui(self):
-        """Update game state UI elements based on current game state"""
+        """Update UI to show current game state"""
         if not hasattr(self, "game") or not self.game:
             return
 
-        if not hasattr(self, "game_state_dropdown") or not self.game_state_dropdown:
-            return
-
-        # Get current game state
+        # Get current state
         current_state = None
         if hasattr(self.game, "current_command") and self.game.current_command:
             current_state = self.game.current_command
 
-        # Only update if we have a valid state
-        if current_state:
-            # Set current item in dropdown without triggering the change event
+        # If no current state, return
+        if not current_state:
+            return
+
+        # Map command to UI button text
+        ui_state = None
+        for button_text, command in self.button_to_command.items():
+            if current_state == command:
+                ui_state = button_text
+                break
+
+        # If no mapping found, use the command directly
+        if not ui_state:
+            ui_state = current_state
+
+        # Find corresponding item in dropdown
+        self.game_state_dropdown = self.findChild(QComboBox, "states")
+        if self.game_state_dropdown:
+            # Block signals to prevent recursion
             self.game_state_dropdown.blockSignals(True)
-            index = self.game_state_dropdown.findText(current_state)
+
+            # Try to find the item
+            index = -1
+            for i in range(self.game_state_dropdown.count()):
+                if self.game_state_dropdown.itemText(i) == ui_state:
+                    index = i
+                    break
+
+            # If found, select it
             if index >= 0:
                 self.game_state_dropdown.setCurrentIndex(index)
+            else:
+                # If not found in dropdown, add it temporarily
+                self.game_state_dropdown.addItem(ui_state)
+                self.game_state_dropdown.setCurrentIndex(
+                    self.game_state_dropdown.count() - 1
+                )
+
+            # Unblock signals
             self.game_state_dropdown.blockSignals(False)
 
-            # Update tooltip with current state
-            self.game_state_dropdown.setToolTip(f"Current game state: {current_state}")
-
-        # We won't disable the dropdown since it's part of normal UI operation
-        # This allows users to select behaviors like "FOLLOW_FLUX" at any time
+        # Update buttons to show current state (optional visual feedback)
+        for btn_name, (action, text) in self.control_map.items():
+            if text == ui_state:
+                button = self.findChild(QPushButton, btn_name)
+                if button:
+                    button.setStyleSheet("background-color: lightblue;")
+            else:
+                button = self.findChild(QPushButton, btn_name)
+                if button:
+                    button.setStyleSheet("")
 
     def closeEvent(self, event):
         """Handle window close event"""
@@ -230,7 +265,7 @@ class SSLClientWindow(QMainWindow):
             self.actionAbrir.triggered.connect(self.open_settings)
 
     def setup_control_buttons(self):
-        control_map = {
+        self.control_map = {
             "halt_button": ("HALT", "HALT"),
             "stop_button": ("STOP", "STOP"),
             "force_start_button": ("FORCE_START", "FORCE START"),
@@ -247,12 +282,15 @@ class SSLClientWindow(QMainWindow):
             "penalty_mark_button": ("PENALTY_MARK", "PENALTY MARK"),
         }
 
-        for btn_name, (action, text) in control_map.items():
+        for btn_name, (action, text) in self.control_map.items():
             button = self.findChild(QPushButton, btn_name)
             if button:
                 if btn_name == "force_start_button":
                     # Special handling for force start button
                     button.clicked.connect(self.handle_force_start)
+                elif btn_name == "normal_start_button":
+                    # Special handling for normal start button
+                    button.clicked.connect(self.handle_normal_start)
                 else:
                     button.clicked.connect(
                         lambda checked, a=action: self.handle_control_action(a)
@@ -321,13 +359,20 @@ class SSLClientWindow(QMainWindow):
             self.show_yellow.toggled.connect(self.update_team_visibility)
 
     def handle_team_selection(self, team_text):
-        """Handle team selection changes"""
+        """Handle team selection changes without triggering unwanted movement"""
         if hasattr(self, "game") and self.game:
             is_yellow = "Amarelo" in team_text
             team_color = "yellow" if is_yellow else "blue"
 
-            # Use the proper team switching method that we added to Game class
+            # Store current game state to restore after team change
+            current_command = None
+            if hasattr(self.game, "current_command") and self.game.current_command:
+                current_command = self.game.current_command
+                print(f"Storing current command: {current_command}")
+
+            # Use the proper team switching method
             if hasattr(self.game, "switch_team_color"):
+                print(f"Switching team color to {team_color}")
                 self.game.switch_team_color(team_color)
             else:
                 # Fallback to existing implementation
@@ -355,6 +400,44 @@ class SSLClientWindow(QMainWindow):
             # Update the UI to reflect team change
             self.update_team_display(team_color)
 
+            # Ensure robots don't automatically start moving after team switch
+            # unless they were already in a movement state
+            if current_command not in ["FORCE_START", "NORMAL_START"]:
+                print(
+                    "Team changed but not in movement state - keeping robots stationary"
+                )
+                # Stop all robots
+                vision_data = self.game.get_vision_data()
+                if vision_data and hasattr(self.game, "robot_state_machines"):
+                    for (
+                        robot_id,
+                        state_machine,
+                    ) in self.game.robot_state_machines.items():
+                        # Set idle state
+                        state_machine.current_state = RobotState.IDLE
+
+                        # Send zero velocity
+                        if hasattr(self.game, "active_controller"):
+                            self.game.active_controller.send_global_velocity(
+                                robot_id, 0, 0, 0
+                            )
+                            print(f"Stopped robot {robot_id} after team change")
+            else:
+                # If we were in a movement state, restore it after team change
+                print(f"Restoring movement state after team change: {current_command}")
+                if hasattr(self.game, "set_game_state"):
+                    self.game.set_game_state(current_command)
+
+                    # Force update immediately
+                    vision_data = self.game.get_vision_data()
+                    if vision_data and hasattr(self.game, "robot_state_machines"):
+                        for (
+                            robot_id,
+                            state_machine,
+                        ) in self.game.robot_state_machines.items():
+                            if hasattr(state_machine, "update"):
+                                state_machine.update(vision_data)
+
     def setup_division_selector(self):
         self.division_combo = self.findChild(QComboBox, "division_combo")
         if self.division_combo:
@@ -365,17 +448,37 @@ class SSLClientWindow(QMainWindow):
         # Implement game controller logic
 
     def handle_control_action(self, action):
-        """Handle control button clicks"""
+        """Handle control button clicks with team awareness"""
         print(f"Control action triggered: {action}")
         if not self.game:
             return
 
-        # Use the set_game_state method if available
-        if hasattr(self.game, "set_game_state"):
-            self.game.set_game_state(action)
+        # Add team info for team-aware commands
+        if action in self.team_aware_commands:
+            # Get current team color
+            team_color = self.game.config["match"]["team_color"]
+
+            # Create team-aware command
+            team_aware_action = f"{action}_{team_color.upper()}"
+            print(f"Using team-aware action: {team_aware_action}")
+
+            # Use the set_game_state method if available
+            if hasattr(self.game, "set_game_state"):
+                self.game.set_game_state(team_aware_action)
+            else:
+                # Fallback to existing send_command method
+                self.game.send_command(team_aware_action)
         else:
-            # Fallback to existing send_command method
-            self.game.send_command(action)
+            # Standard command without team info
+            if hasattr(self.game, "set_game_state"):
+                self.game.set_game_state(action)
+            else:
+                # Fallback to existing send_command method
+                self.game.send_command(action)
+
+        # Update UI immediately after sending command
+        if hasattr(self, "update_game_state_ui"):
+            self.update_game_state_ui()
 
     def update_team_display(self, team_color):
         """Update UI elements to show current team"""
@@ -400,16 +503,77 @@ class SSLClientWindow(QMainWindow):
 
     def handle_force_start(self):
         """Handle FORCE START button - start game and initialize behavior"""
+        if not self.game:
+            print("No game instance available")
+            return
+
+        print("FORCE START button clicked - starting game...")
+
+        # Start the game if not already started
+        self.start_game()
+
+        # Make sure robot state machines are initialized
+        if (
+            not hasattr(self.game, "robot_state_machines")
+            or not self.game.robot_state_machines
+        ):
+            print("Initializing robot state machines...")
+            self.game._initialize_robot_state_machines()
+
+        # Apply FORCE_START command
+        if hasattr(self.game, "set_game_state"):
+            print("Setting game state to FORCE_START")
+            self.game.set_game_state("FORCE_START")
+        else:
+            # Fallback to existing implementation
+            print("Using legacy send_command method")
+            self.game.send_command("FORCE_START")
+
+        # Directly trigger robot motion
+        vision_data = self.game.get_vision_data()
+        if vision_data and hasattr(self.game, "robot_state_machines"):
+            print("Triggering immediate robot updates with new state")
+            for robot_id, state_machine in self.game.robot_state_machines.items():
+                print(f"Updating robot {robot_id}")
+                state_machine.update(vision_data)
+
+        # Update UI to reflect the changed state
+        self.update_game_state_ui()
+
+        print("FORCE START sequence complete")
+
+    def handle_normal_start(self):
+        """Handle NORMAL START button - start game and initialize normal behavior"""
         if self.game:
             # Start the game if not already started
             self.start_game()
 
-            # Then send the FORCE_START command using the new set_game_state method if available
+            # Then send the NORMAL_START command using the set_game_state method
             if hasattr(self.game, "set_game_state"):
-                self.game.set_game_state("FORCE_START")
+                print("Sending NORMAL_START command and forcing robot updates")
+
+                # Set the game state
+                self.game.set_game_state("NORMAL_START")
+
+                # Explicitly update all robot state machines to ensure they respond
+                vision_data = self.game.get_vision_data()
+                if vision_data and hasattr(self.game, "robot_state_machines"):
+                    for (
+                        robot_id,
+                        state_machine,
+                    ) in self.game.robot_state_machines.items():
+                        if hasattr(state_machine, "update"):
+                            # Force update with latest vision data
+                            state_machine.update(vision_data)
+                            print(f"Forced update of robot {robot_id}")
+
+                            # Also make sure the robot is in motion
+                            if hasattr(state_machine, "_follow_path"):
+                                state_machine._follow_path()
+                                print(f"Forced path following for robot {robot_id}")
             else:
                 # Fallback to existing implementation
-                self.handle_control_action("FORCE_START")
+                self.handle_control_action("NORMAL_START")
 
     def update_visualization(self):
         """Force an update of the visualization"""
@@ -854,6 +1018,112 @@ class SSLClientWindow(QMainWindow):
 
         # Print final state
         print(f"Dropdown now has {self.game_state_dropdown.count()} items")
+
+    def setup_game_state_handling(self):
+        """Set up comprehensive game state handling"""
+        # Store mapping of UI button actions to game controller commands
+        self.button_to_command = {
+            "HALT": "HALT",
+            "STOP": "STOP",
+            "FORCE START": "FORCE_START",
+            "NORMAL START": "NORMAL_START",
+            "ASK TIMEOUT": "TIMEOUT",
+            "SUBSTITUTION": "SUBSTITUTION",
+            "FREE-KICK POSITION": "FREE_KICK",
+            "KICK-OFF": "KICK_OFF",
+            "PENALTY": "PENALTY",
+            "GOAL KICK": "GOAL_KICK",
+            "CORNER KICK": "CORNER_KICK",
+            "CENTER CIRCLE": "CENTER_CIRCLE",
+            "BALL PLACEMENT": "BALL_PLACEMENT",
+            "PENALTY MARK": "PENALTY_MARK",
+        }
+
+        # For commands that need a team, set up team mapping
+        self.team_aware_commands = [
+            "FREE_KICK",
+            "KICK_OFF",
+            "PENALTY",
+            "GOAL_KICK",
+            "CORNER_KICK",
+            "BALL_PLACEMENT",
+        ]
+
+        # Connect to existing states dropdown
+        self.game_state_dropdown = self.findChild(QComboBox, "states")
+        if self.game_state_dropdown:
+            # Update tooltip
+            self.game_state_dropdown.setToolTip("Current game state")
+            # Connect signal
+            self.game_state_dropdown.currentTextChanged.connect(
+                self.handle_state_dropdown_change
+            )
+
+        # Setup game command observers
+        if self.game:
+            # Set up timer to check for game state changes from Game Controller
+            self.gc_update_timer = QTimer()
+            self.gc_update_timer.timeout.connect(self.check_game_controller_state)
+            self.gc_update_timer.start(100)  # Check every 100ms
+
+            # Store last known state to detect changes
+            self.last_known_state = None
+
+    def check_game_controller_state(self):
+        """Check if game state has changed from Game Controller"""
+        if not self.game or not hasattr(self.game, "current_command"):
+            return
+
+        current_state = self.game.current_command
+
+        # Only update if state has changed
+        if current_state != self.last_known_state:
+            self.last_known_state = current_state
+            self.update_game_state_ui()
+
+            # Log state change
+            print(f"Game state changed to: {current_state} (from Game Controller)")
+
+    def handle_state_dropdown_change(self, state):
+        """Handle state change from dropdown"""
+        if not hasattr(self, "game") or not self.game:
+            return
+
+        # Special handling for behavior modes
+        if state == "FOLLOW FLUX":
+            print("Selected behavior mode: FOLLOW FLUX")
+            return
+
+        # Check if we're allowed to change state
+        current_state = None
+        if hasattr(self.game, "current_command") and self.game.current_command:
+            current_state = self.game.current_command
+
+        can_change_state = current_state in ["HALT", "STOP"] or not current_state
+
+        if not can_change_state and state != current_state:
+            # Show warning if trying to change state when not allowed
+            QMessageBox.warning(
+                self,
+                "Game State Change Not Allowed",
+                f"Game state can only be changed during HALT or STOP.\nCurrent state: {current_state}",
+            )
+
+            # Reset dropdown to current state
+            self.update_game_state_ui()
+            return
+
+        # Map UI state to command
+        if state in self.button_to_command:
+            command = self.button_to_command[state]
+            self.handle_control_action(command)
+        else:
+            # Handle any custom states not in the mapping
+            print(f"Custom state selected: {state}")
+            if hasattr(self.game, "set_game_state"):
+                self.game.set_game_state(state)
+            else:
+                self.game.send_command(state)
 
     def handle_game_state_change(self, state):
         """Handle game state change from dropdown"""

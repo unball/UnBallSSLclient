@@ -94,8 +94,152 @@ class RobotStateMachine:
         return None
 
     def update(self, vision_data: Dict):
-        """Update robot state based on vision data"""
+        """Update robot state based on vision data and game state"""
         with self.state_lock:
+            # Check game state first
+            game_state = None
+            team_for_action = None
+
+            # Get current game state from referee data
+            referee_data = self.game.get_referee_data()
+            if referee_data:
+                game_state = referee_data.get("command")
+                team_for_action = referee_data.get("team")
+                can_play = referee_data.get("can_play", False)
+
+                print(
+                    f"Robot {self.robot_id} update - Game state: {game_state}, Team: {team_for_action}, Can play: {can_play}"
+                )
+
+                # Handle specific game states
+                if game_state == "HALT":
+                    # Immediately stop robot
+                    print(f"Robot {self.robot_id}: HALT - Stopping immediately")
+                    if hasattr(self.game, "active_controller"):
+                        self.game.active_controller.send_global_velocity(
+                            self.robot_id, 0, 0, 0
+                        )
+                    self.current_state = RobotState.IDLE
+                    return
+
+                elif game_state == "STOP":
+                    # Can move but stay away from ball
+                    print(f"Robot {self.robot_id}: STOP - Moving away from ball")
+                    self.current_state = RobotState.RETURNING
+                    self.target_position = self.home_position
+
+                    # Get ball position to ensure we stay away
+                    if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                        ball_x = vision_data["ball"]["x"]
+                        ball_y = vision_data["ball"]["y"]
+                        current_pos = self._get_current_pos()
+
+                        if current_pos:
+                            # Check if we're too close to ball (within 0.5m)
+                            distance_to_ball = math.sqrt(
+                                (current_pos[0] - ball_x) ** 2
+                                + (current_pos[1] - ball_y) ** 2
+                            )
+
+                            if distance_to_ball < 0.5:
+                                # Move away from ball
+                                away_vector_x = current_pos[0] - ball_x
+                                away_vector_y = current_pos[1] - ball_y
+
+                                # Normalize vector
+                                vector_length = math.sqrt(
+                                    away_vector_x**2 + away_vector_y**2
+                                )
+                                if vector_length > 0:
+                                    away_vector_x /= vector_length
+                                    away_vector_y /= vector_length
+
+                                # Set target position away from ball
+                                self.target_position = (
+                                    current_pos[0] + away_vector_x * 0.6,
+                                    current_pos[1] + away_vector_y * 0.6,
+                                )
+                                print(
+                                    f"Robot {self.robot_id}: Moving away from ball to {self.target_position}"
+                                )
+
+                    # Update path with new target
+                    if current_pos and self.target_position:
+                        self.game.path_planner.request_path(
+                            self.robot_id, current_pos, self.target_position
+                        )
+
+                    # Follow path to safe position
+                    self._follow_path()
+                    return
+
+                elif game_state in [
+                    "KICK_OFF",
+                    "FREE_KICK",
+                    "PENALTY",
+                    "GOAL_KICK",
+                    "CORNER_KICK",
+                    "BALL_PLACEMENT",
+                ]:
+                    # Check if this command is for our team
+                    is_our_team_turn = team_for_action == self.team_color
+
+                    if is_our_team_turn:
+                        print(f"Robot {self.robot_id}: {game_state} for our team")
+                        # Handle based on robot role (will be implemented in subclasses)
+                        # Let normal decision logic run
+                    else:
+                        print(
+                            f"Robot {self.robot_id}: {game_state} for opponent team - keeping distance"
+                        )
+                        # We need to keep distance (0.5m) from ball during opponent's turn
+                        self.current_state = RobotState.SUPPORTING
+
+                        # Make sure we're not too close to the ball
+                        if (
+                            "ball" in vision_data
+                            and vision_data["ball"]["x"] is not None
+                        ):
+                            ball_x = vision_data["ball"]["x"]
+                            ball_y = vision_data["ball"]["y"]
+                            current_pos = self._get_current_pos()
+
+                            if current_pos:
+                                # Check if we're too close to ball
+                                distance_to_ball = math.sqrt(
+                                    (current_pos[0] - ball_x) ** 2
+                                    + (current_pos[1] - ball_y) ** 2
+                                )
+
+                                if distance_to_ball < 0.5:
+                                    # Move away from ball
+                                    away_vector_x = current_pos[0] - ball_x
+                                    away_vector_y = current_pos[1] - ball_y
+
+                                    # Normalize vector
+                                    vector_length = math.sqrt(
+                                        away_vector_x**2 + away_vector_y**2
+                                    )
+                                    if vector_length > 0:
+                                        away_vector_x /= vector_length
+                                        away_vector_y /= vector_length
+
+                                    # Set target position away from ball
+                                    self.target_position = (
+                                        current_pos[0] + away_vector_x * 0.6,
+                                        current_pos[1] + away_vector_y * 0.6,
+                                    )
+
+                                    # Update path planning
+                                    self.game.path_planner.request_path(
+                                        self.robot_id, current_pos, self.target_position
+                                    )
+
+                                    # Follow path to safe position
+                                    self._follow_path()
+                                    return
+
+            # If no game state interruption, proceed with normal decision making
             self._decide_next_action(vision_data)
             self._execute_current_state(vision_data)
 
@@ -367,10 +511,71 @@ class GoalkeeperStateMachine(RobotStateMachine):
         self.target_position = self.home_position
 
     def _decide_next_action(self, vision_data: Dict):
-        """Goalkeeper decision making with improved movement"""
+        """Goalkeeper decision making with game state awareness"""
         # Add debug logging
         self.debug_robot_state(vision_data)
 
+        # Get referee data to check game state
+        referee_data = self.game.get_referee_data()
+        game_state = None
+        team_for_action = None
+
+        if referee_data:
+            game_state = referee_data.get("command")
+            team_for_action = referee_data.get("team")
+            can_play = referee_data.get("can_play", False)
+
+        # For most game states, goalkeeper stays in goal
+        # But we need special handling for penalty against us
+        if game_state == "PENALTY" and team_for_action != self.team_color:
+            # Opposing team's penalty - goalkeeper must stay on goal line
+            print(f"Goalkeeper {self.robot_id}: Positioning for PENALTY defense")
+            self.current_state = RobotState.BLOCKING
+
+            # Position goalkeeper on goal line
+            goal_line_x = -2.0 if self.team_color == "blue" else 2.0
+
+            # Get ball position to align with
+            if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                ball_y = vision_data["ball"]["y"]
+                # Constrain to goal width
+                goal_width = 0.8  # From SSL-EL rules
+                ball_y = max(-goal_width / 2, min(goal_width / 2, ball_y))
+
+                self.target_position = (goal_line_x, ball_y)
+
+                current_pos = self._get_current_pos()
+                if current_pos:
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+            return
+
+        # For goal kick by our team
+        if game_state == "GOAL_KICK" and team_for_action == self.team_color:
+            # Our goal kick - goalkeeper should position at the ball
+            print(f"Goalkeeper {self.robot_id}: Positioning for GOAL_KICK")
+            self.current_state = RobotState.MOVING_TO_POSITION
+
+            # Get ball position
+            if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                ball_x = vision_data["ball"]["x"]
+                ball_y = vision_data["ball"]["y"]
+
+                # Position slightly behind ball
+                offset_x = -0.2 if self.team_color == "blue" else 0.2
+                self.target_position = (ball_x + offset_x, ball_y)
+
+                current_pos = self._get_current_pos()
+                if current_pos:
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+            return
+
+        # Regular goalkeeper behavior for normal gameplay
         if not vision_data or "ball" not in vision_data:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
@@ -504,31 +709,139 @@ class DefenderStateMachine(RobotStateMachine):
         self.target_position = self.home_position
 
     def _decide_next_action(self, vision_data: Dict):
-        """Defender decision making with improved movement"""
-        # Add debug logging
-        self.debug_robot_state(vision_data)
+        """Defender decision making with game state awareness"""
+        # Get referee data to check game state
+        referee_data = self.game.get_referee_data()
+        game_state = None
+        team_for_action = None
 
+        if referee_data:
+            game_state = referee_data.get("command")
+            team_for_action = referee_data.get("team")
+            can_play = referee_data.get("can_play", False)
+
+        # For defensive plays when our team has the action
+        if game_state and team_for_action == self.team_color:
+            if game_state == "KICK_OFF":
+                # Defender should position in defensive half
+                print(f"Defender {self.robot_id}: Positioning for KICK-OFF")
+                self.current_state = RobotState.MOVING_TO_POSITION
+
+                # Position defender in defensive half
+                x_pos = -1.0 if self.team_color == "blue" else 1.0
+                self.target_position = (x_pos, 0.5)  # Offset from center
+
+                current_pos = self._get_current_pos()
+                if current_pos:
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+                return
+
+            elif game_state == "FREE_KICK":
+                # Defender should position to support attack
+                print(f"Defender {self.robot_id}: Supporting FREE-KICK")
+                self.current_state = RobotState.SUPPORTING
+
+                # Get ball position
+                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                    ball_x = vision_data["ball"]["x"]
+                    ball_y = vision_data["ball"]["y"]
+
+                    # Position behind ball for support
+                    offset_x = -0.5 if self.team_color == "blue" else 0.5
+                    self.target_position = (ball_x + offset_x, ball_y)
+
+                    current_pos = self._get_current_pos()
+                    if current_pos:
+                        self.game.path_planner.request_path(
+                            self.robot_id, current_pos, self.target_position
+                        )
+                        self._follow_path()
+                return
+
+            elif game_state == "PENALTY":
+                # Defender should clear the way for penalty taker
+                print(f"Defender {self.robot_id}: Clearing for PENALTY")
+                self.current_state = RobotState.SUPPORTING
+
+                # Position away from penalty area
+                x_pos = -1.0 if self.team_color == "blue" else 1.0
+                self.target_position = (x_pos, -1.0)  # Away from the action
+
+                current_pos = self._get_current_pos()
+                if current_pos:
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+                return
+
+            elif game_state in ["CORNER_KICK", "GOAL_KICK"]:
+                # Defender should position for these kicks
+                print(f"Defender {self.robot_id}: Positioning for {game_state}")
+                self.current_state = RobotState.SUPPORTING
+
+                if game_state == "CORNER_KICK":
+                    # For corner kick, position in the box
+                    x_pos = 1.5 if self.team_color == "blue" else -1.5
+                    self.target_position = (x_pos, 0)  # In front of goal
+                else:  # GOAL_KICK
+                    # For goal kick, position to receive from goalkeeper
+                    x_pos = -1.5 if self.team_color == "blue" else 1.5
+                    self.target_position = (x_pos, 0.5)
+
+                current_pos = self._get_current_pos()
+                if current_pos:
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+                return
+
+        # For opposing team's actions, position defensively
+        elif game_state and team_for_action != self.team_color:
+            if game_state in ["KICK_OFF", "FREE_KICK", "CORNER_KICK"]:
+                # Defender should take defensive position
+                print(
+                    f"Defender {self.robot_id}: Defensive position for opponent {game_state}"
+                )
+                self.current_state = RobotState.DEFENDING
+
+                # Position defensively between ball and our goal
+                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                    ball_x = vision_data["ball"]["x"]
+                    ball_y = vision_data["ball"]["y"]
+
+                    # Our goal position
+                    goal_x = -2.0 if self.team_color == "blue" else 2.0
+                    goal_y = 0.0
+
+                    # Position between ball and goal
+                    self.target_position = (
+                        (ball_x + goal_x) / 2,
+                        (ball_y + goal_y) / 2,
+                    )
+
+                    current_pos = self._get_current_pos()
+                    if current_pos:
+                        self.game.path_planner.request_path(
+                            self.robot_id, current_pos, self.target_position
+                        )
+                        self._follow_path()
+                return
+
+        # Regular defender behavior for normal gameplay
         if not vision_data or "ball" not in vision_data:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
-            # Force path planning to home position
-            current_pos = self._get_current_pos()
-            if current_pos:
-                self.game.path_planner.request_path(
-                    self.robot_id, current_pos, self.home_position
-                )
             return
 
         ball = vision_data["ball"]
         if ball["x"] is None:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
-            # Force path planning to home position
-            current_pos = self._get_current_pos()
-            if current_pos:
-                self.game.path_planner.request_path(
-                    self.robot_id, current_pos, self.home_position
-                )
             return
 
         current_pos = self._get_current_pos()
@@ -540,12 +853,14 @@ class DefenderStateMachine(RobotStateMachine):
             self.current_state = RobotState.MARKING
             defend_pos = self._calculate_defense_position(ball)
             self.target_position = defend_pos
+
             # Force path planning to defense position
             self.game.path_planner.request_path(self.robot_id, current_pos, defend_pos)
             print(f"Defender {self.robot_id}: Moving to defend at {defend_pos}")
         else:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
+
             # Force path planning to home position
             self.game.path_planner.request_path(
                 self.robot_id, current_pos, self.home_position
@@ -554,7 +869,7 @@ class DefenderStateMachine(RobotStateMachine):
                 f"Defender {self.robot_id}: Returning to home at {self.home_position}"
             )
 
-        # Force path following
+        # Follow the path
         self._follow_path()
 
     def _should_defend(self, ball: Dict) -> bool:
@@ -648,32 +963,126 @@ class AttackerStateMachine(RobotStateMachine):
             print(f"Initialized Attacker (ID: {robot_id}, Team: {team_color})")
 
     def _decide_next_action(self, vision_data: Dict):
-        """Attacker decision making logic with strict halfway line enforcement"""
-        # Print debug info
-        if DEBUG_ROBOT_BEHAVIOR:
-            print(f"\nAttacker {self.robot_id} decision making...")
-
-        if not vision_data or "ball" not in vision_data:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            return
-
-        ball = vision_data["ball"]
-        if ball["x"] is None:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            return
-
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            return
-
-        # Get referee data to check if game has started
+        """Attacker decision making with game state awareness"""
+        # Get referee data to check game state
         referee_data = self.game.get_referee_data()
+        game_state = None
+        team_for_action = None
 
-        # Default to game not started if no data or in pre-start commands
-        game_started = False
+        if referee_data:
+            game_state = referee_data.get("command")
+            team_for_action = referee_data.get("team")
+            can_play = referee_data.get("can_play", False)
 
+        # Special handling for offensive actions that our team executes
+        if game_state and team_for_action == self.team_color:
+            if game_state == "KICK_OFF":
+                # Attacker should position for kickoff
+                print(f"Attacker {self.robot_id}: Positioning for KICK-OFF")
+                self.current_state = RobotState.MOVING_TO_POSITION
+
+                # Position attacker near center circle to take kickoff
+                self.target_position = (0, 0)
+
+                current_pos = self._get_current_pos()
+                if current_pos:
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+                return
+
+            elif game_state == "FREE_KICK":
+                # Attacker should take free kick if ball is in forward half
+                print(f"Attacker {self.robot_id}: Positioning for FREE-KICK")
+                self.current_state = RobotState.MOVING_TO_BALL
+
+                # Set target to ball position
+                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                    ball_x = vision_data["ball"]["x"]
+                    ball_y = vision_data["ball"]["y"]
+
+                    # Position attacker near ball to take free kick
+                    # Position slightly behind ball in direction of goal
+                    goal_x = 2.0 if self.team_color == "blue" else -2.0
+                    goal_y = 0.0
+
+                    # Vector from ball to goal
+                    dx = goal_x - ball_x
+                    dy = goal_y - ball_y
+
+                    # Normalize vector
+                    dist = (dx**2 + dy**2) ** 0.5
+                    if dist > 0:
+                        dx /= dist
+                        dy /= dist
+
+                    # Position behind ball on path to goal
+                    self.target_position = (ball_x - dx * 0.2, ball_y - dy * 0.2)
+
+                    current_pos = self._get_current_pos()
+                    if current_pos:
+                        self.game.path_planner.request_path(
+                            self.robot_id, current_pos, self.target_position
+                        )
+                        self._follow_path()
+                return
+
+            elif game_state == "PENALTY":
+                # Attacker should take penalty if assigned
+                print(f"Attacker {self.robot_id}: Positioning for PENALTY")
+                self.current_state = RobotState.MOVING_TO_POSITION
+
+                # Get penalty mark position
+                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                    ball_x = vision_data["ball"]["x"]
+                    ball_y = vision_data["ball"]["y"]
+
+                    # Position attacker behind penalty mark
+                    # The ball should be on the penalty mark
+                    goal_x = 2.0 if self.team_color == "blue" else -2.0
+
+                    # Position slightly behind ball
+                    offset_x = -0.2 if self.team_color == "blue" else 0.2
+                    self.target_position = (ball_x + offset_x, ball_y)
+
+                    current_pos = self._get_current_pos()
+                    if current_pos:
+                        self.game.path_planner.request_path(
+                            self.robot_id, current_pos, self.target_position
+                        )
+                        self._follow_path()
+                return
+
+            elif game_state in ["CORNER_KICK", "GOAL_KICK"]:
+                # Attacker should position strategically for these kicks
+                print(f"Attacker {self.robot_id}: Positioning for {game_state}")
+                self.current_state = RobotState.MOVING_TO_POSITION
+
+                # Get ball position
+                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
+                    ball_x = vision_data["ball"]["x"]
+                    ball_y = vision_data["ball"]["y"]
+
+                    # For corner kick, position near ball
+                    if game_state == "CORNER_KICK":
+                        # Position slightly offset from ball
+                        offset_x = -0.2 if ball_x > 0 else 0.2
+                        offset_y = -0.2 if ball_y > 0 else 0.2
+                        self.target_position = (ball_x + offset_x, ball_y + offset_y)
+                    else:  # GOAL_KICK
+                        # Position in forward position to receive the kick
+                        self.target_position = (0, 0)  # Center field
+
+                    current_pos = self._get_current_pos()
+                    if current_pos:
+                        self.game.path_planner.request_path(
+                            self.robot_id, current_pos, self.target_position
+                        )
+                        self._follow_path()
+                return
+
+        # Check if game has started based on referee data
         if referee_data:
             pre_start_commands = [
                 "HALT",
@@ -691,6 +1100,8 @@ class AttackerStateMachine(RobotStateMachine):
                 or command == "NORMAL_START"
                 or command == "FORCE_START"
             )
+        else:
+            game_started = True  # Default to game started if no referee data
 
         # Enforce halfway line restriction before game starts
         if not game_started:
@@ -698,201 +1109,77 @@ class AttackerStateMachine(RobotStateMachine):
             halfway_line = 0
             if self.team_color == "blue":
                 # Blue team stays in negative x half (left side)
-                in_wrong_half = current_pos[0] > halfway_line
-                safe_x = -0.5  # Safe position in our half
+                current_pos = self._get_current_pos()
+                if current_pos and current_pos[0] > halfway_line:
+                    # In wrong half, return to our half
+                    print(
+                        f"ENFORCING HALFWAY LINE: Attacker {self.robot_id} returning to correct half"
+                    )
+                    self.current_state = RobotState.RETURNING
+                    self.target_position = (-0.5, current_pos[1])
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+                    return
             else:
                 # Yellow team stays in positive x half (right side)
-                in_wrong_half = current_pos[0] < halfway_line
-                safe_x = 0.5  # Safe position in our half
+                current_pos = self._get_current_pos()
+                if current_pos and current_pos[0] < halfway_line:
+                    # In wrong half, return to our half
+                    print(
+                        f"ENFORCING HALFWAY LINE: Attacker {self.robot_id} returning to correct half"
+                    )
+                    self.current_state = RobotState.RETURNING
+                    self.target_position = (0.5, current_pos[1])
+                    self.game.path_planner.request_path(
+                        self.robot_id, current_pos, self.target_position
+                    )
+                    self._follow_path()
+                    return
 
-            # Strict enforcement: if in wrong half, immediately return to our half
-            if in_wrong_half:
-                print(
-                    f"ENFORCING HALFWAY LINE: Attacker {self.robot_id} returning to correct half"
-                )
-                self.current_state = RobotState.RETURNING
-                self.target_position = (safe_x, current_pos[1])
-                self.game.path_planner.request_path(
-                    self.robot_id, current_pos, self.target_position
-                )
-                # Force the robot to stay in its half
-                self._follow_path()
-                return
+        # Regular attacker behavior for normal gameplay
+        if "ball" not in vision_data or vision_data["ball"]["x"] is None:
+            self.current_state = RobotState.RETURNING
+            self.target_position = self.home_position
+            return
+
+        ball = vision_data["ball"]
+        current_pos = self._get_current_pos()
+        if not current_pos:
+            return
 
         # Calculate distance to ball
         distance_to_ball = (
             (current_pos[0] - ball["x"]) ** 2 + (current_pos[1] - ball["y"]) ** 2
         ) ** 0.5
 
-        # Regular decision making - only modified to respect halfway line
         if distance_to_ball < self.ball_ownership_threshold:
-            # We have the ball - try to score, but respect halfway line if game not started
-            if not game_started:
-                # If game hasn't started, don't allow crossing halfway line
-                if (self.team_color == "blue" and ball["x"] > 0) or (
-                    self.team_color == "yellow" and ball["x"] < 0
-                ):
-                    # Ball is in opponent half, can't go there yet
-                    if self.team_color == "blue":
-                        safe_x = -0.3  # Safe position in our half
-                    else:
-                        safe_x = 0.3  # Safe position in our half
-
-                    self.current_state = RobotState.RETURNING
-                    self.target_position = (safe_x, ball["y"])
-                    print(
-                        f"HALFWAY RULE: Can't attack with ball in opponent half before game start"
-                    )
-                else:
-                    # Ball is in our half, can possess but not cross halfway line
-                    attack_pos = self._calculate_attack_position(ball)
-                    # Ensure attack position respects halfway line
-                    if (self.team_color == "blue" and attack_pos[0] > 0) or (
-                        self.team_color == "yellow" and attack_pos[0] < 0
-                    ):
-                        # Adjust attack position to stay in our half
-                        if self.team_color == "blue":
-                            attack_pos = (
-                                -0.2,
-                                attack_pos[1],
-                            )  # Just before halfway line
-                        else:
-                            attack_pos = (
-                                0.2,
-                                attack_pos[1],
-                            )  # Just before halfway line
-                    self.current_state = RobotState.ATTACKING
-                    self.target_position = attack_pos
-            else:
-                # Game started, normal attack behavior
-                self.current_state = RobotState.ATTACKING
-                attack_pos = self._calculate_attack_position(ball)
-                self.target_position = attack_pos
+            # We have the ball - try to score
+            self.current_state = RobotState.ATTACKING
+            attack_pos = self._calculate_attack_position(ball)
+            self.target_position = attack_pos
 
             self.game.path_planner.request_path(
                 self.robot_id, current_pos, self.target_position
             )
-
         elif self._should_go_to_ball(ball):
-            # Go to ball, but respect halfway line if game not started
-            if not game_started:
-                # Only go to ball if it's in our half
-                if (self.team_color == "blue" and ball["x"] > 0) or (
-                    self.team_color == "yellow" and ball["x"] < 0
-                ):
-                    # Ball is in opponent half, stay in our half
-                    if self.team_color == "blue":
-                        self.current_state = RobotState.SUPPORTING
-                        self.target_position = (-0.3, ball["y"])  # Stay in our half
-                    else:
-                        self.current_state = RobotState.SUPPORTING
-                        self.target_position = (0.3, ball["y"])  # Stay in our half
-
-                    print(
-                        f"HALFWAY RULE: Cannot pursue ball in opponent half before game start"
-                    )
-                else:
-                    # Ball is in our half, can go to it
-                    self.current_state = RobotState.MOVING_TO_BALL
-                    self.target_position = (ball["x"], ball["y"])
-            else:
-                # Game started, normal ball pursuit
-                self.current_state = RobotState.MOVING_TO_BALL
-                self.target_position = (ball["x"], ball["y"])
+            # Go to ball
+            self.current_state = RobotState.MOVING_TO_BALL
+            self.target_position = (ball["x"], ball["y"])
 
             self.game.path_planner.request_path(
                 self.robot_id, current_pos, self.target_position
             )
-
         else:
-            # Take supporting position, but respect halfway line
+            # Take supporting position
             support_pos = self._calculate_support_position(ball)
-
-            # If game hasn't started, ensure support position is in our half
-            if not game_started:
-                if (self.team_color == "blue" and support_pos[0] > 0) or (
-                    self.team_color == "yellow" and support_pos[0] < 0
-                ):
-                    # Adjust support position to stay in our half
-                    if self.team_color == "blue":
-                        support_pos = (-0.3, support_pos[1])  # Stay in our half
-                    else:
-                        support_pos = (0.3, support_pos[1])  # Stay in our half
-
-                    print(
-                        f"HALFWAY RULE: Adjusted support position to stay in our half"
-                    )
-
             self.current_state = RobotState.SUPPORTING
             self.target_position = support_pos
 
             self.game.path_planner.request_path(self.robot_id, current_pos, support_pos)
 
-        debug_enabled = False
-
-        if debug_enabled:
-            # Print current positions
-            print(f"\n==== ATTACKER {self.robot_id} HALFWAY LINE DEBUG ====")
-            print(f"Team Color: {self.team_color}")
-            print(f"Current Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
-
-            # Print referee data
-            referee_data = self.game.get_referee_data()
-            if referee_data:
-                print(f"Referee Command: {referee_data.get('command', 'None')}")
-                print(f"Can Play: {referee_data.get('can_play', False)}")
-            else:
-                print("No referee data available")
-
-            # Determine if game has started based on referee data
-            game_started = True  # Default if no referee data
-            if referee_data:
-                pre_start_commands = [
-                    "HALT",
-                    "STOP",
-                    "PREPARE_KICKOFF_BLUE",
-                    "PREPARE_KICKOFF_YELLOW",
-                ]
-                game_started = referee_data.get(
-                    "command", ""
-                ) not in pre_start_commands and referee_data.get("can_play", False)
-
-            print(f"Game Started: {game_started}")
-
-            # Calculate field positions
-            halfway_line = 0
-            our_half_x_limit = halfway_line
-            in_wrong_half = False
-
-            if not game_started:
-                if self.team_color == "blue":
-                    in_wrong_half = current_pos[0] > our_half_x_limit
-                else:
-                    in_wrong_half = current_pos[0] < our_half_x_limit
-
-                print(f"Halfway Line: {halfway_line}")
-                print(f"In Wrong Half: {in_wrong_half}")
-
-                # Check target position if exists
-                if self.target_position:
-                    print(
-                        f"Target Position: ({self.target_position[0]:.2f}, {self.target_position[1]:.2f})"
-                    )
-                    target_in_wrong_half = False
-                    if not game_started:
-                        if self.team_color == "blue":
-                            target_in_wrong_half = (
-                                self.target_position[0] > our_half_x_limit
-                            )
-                        else:
-                            target_in_wrong_half = (
-                                self.target_position[0] < our_half_x_limit
-                            )
-                    print(f"Target In Wrong Half: {target_in_wrong_half}")
-
-                print("==============================================")
-
-        # After deciding and requesting path, follow it
+        # Follow the path after deciding on target
         self._follow_path()
 
     def _should_go_to_ball(self, ball: Dict) -> bool:

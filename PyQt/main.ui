@@ -392,7 +392,7 @@
        </property>
       </item>
      </widget>
-     <widget class="QComboBox" name="states">
+<widget class="QComboBox" name="states">
       <property name="geometry">
        <rect>
         <x>940</x>
@@ -436,22 +436,82 @@
       </item>
       <item>
        <property name="text">
-        <string>KICK-OFF</string>
+        <string>KICK-OFF_BLUE</string>
        </property>
       </item>
       <item>
        <property name="text">
-        <string>FREE-KICK</string>
+        <string>KICK-OFF_YELLOW</string>
        </property>
       </item>
       <item>
        <property name="text">
-        <string>PENALTY</string>
+        <string>FREE-KICK_BLUE</string>
        </property>
       </item>
       <item>
        <property name="text">
-        <string>GOAL_KICK</string>
+        <string>FREE-KICK_YELLOW</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>PENALTY_BLUE</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>PENALTY_YELLOW</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>GOAL_KICK_BLUE</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>GOAL_KICK_YELLOW</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>THROW-IN_BLUE</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>THROW-IN_YELLOW</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>CORNER_KICK_BLUE</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>CORNER_KICK_YELLOW</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>BALL_PLACEMENT_BLUE</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>BALL_PLACEMENT_YELLOW</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>AIMLESS_KICK_BLUE</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>AIMLESS_KICK_YELLOW</string>
        </property>
       </item>
      </widget>

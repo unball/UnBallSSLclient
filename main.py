@@ -137,44 +137,88 @@ class Game:
 
     def set_game_state(self, state):
         """
-        Update the game state based on referee commands
+        Process game state commands and update robot behavior accordingly
 
         Args:
-            state: Game state command from UI or referee (HALT, STOP, FORCE_START, etc.)
+            state: Game state command string
         """
         print(f"Setting game state to: {state}")
         self.current_command = state
 
+        # Parse team-specific commands
+        team_commands = [
+            "FREE_KICK",
+            "KICK_OFF",
+            "PENALTY",
+            "GOAL_KICK",
+            "CORNER_KICK",
+            "BALL_PLACEMENT",
+        ]
+
+        team_color = None
+        base_command = state
+
+        # Check if this is a team-specific command
+        for cmd in team_commands:
+            if state.startswith(cmd + "_"):
+                parts = state.split("_", 1)
+                if len(parts) > 1:
+                    base_command = parts[0]
+                    team_color = parts[1].lower()
+                    print(f"Extracted base command: {base_command}, team: {team_color}")
+                    break
+
         # Update referee data with this command to ensure robot state machines respect it
         if hasattr(self, "last_referee_data") and self.last_referee_data:
-            self.last_referee_data["command"] = state
-            self.last_referee_data["can_play"] = state in [
+            self.last_referee_data["command"] = base_command
+            self.last_referee_data["team"] = team_color
+            self.last_referee_data["can_play"] = base_command in [
                 "FORCE_START",
                 "NORMAL_START",
             ]
+            print(
+                f"Updated referee data: command={base_command}, team={team_color}, can_play={self.last_referee_data['can_play']}"
+            )
 
-        # Directly implement behavior for different commands
+        # Take immediate action based on command
         if state == "HALT":
             # Stop all robots immediately
             for i in range(3):  # Assuming 3 robots per team
                 self.blue_robots.send_global_velocity(i, 0, 0, 0)
                 self.yellow_robots.send_global_velocity(i, 0, 0, 0)
-            print("HALT: All robots stopped")
+            print("HALT command: All robots stopped")
 
         elif state == "STOP":
             # Robots can move but must stay away from ball
-            print("STOP: Robots must stay away from ball")
+            print("STOP command: Robots must stay away from ball")
             # Let state machines handle this in their next update
 
-        elif state == "FORCE_START" or state == "NORMAL_START":
+        elif state.startswith("FORCE_START") or state.startswith("NORMAL_START"):
             print(f"{state}: Game starting, robots can move freely")
             # Game is now in play, robots will follow their state machines
 
-        # Update all robot state machines immediately to respect new state
+        # Special handling for team-specific commands
+        elif team_color:
+            print(f"Team-specific command {base_command} for team {team_color}")
+            # Force update of robot states for the active team
+            if team_color == self.config["match"]["team_color"]:
+                print("Command applies to our team - preparing for action")
+            else:
+                print(
+                    "Command applies to opponent team - preparing defensive positions"
+                )
+
+        # Force immediate update of all robot state machines
         vision_data = self.get_vision_data()
-        if vision_data:
+        if vision_data and hasattr(self, "robot_state_machines"):
+            print("Updating all robot state machines with new command")
             for robot_id, state_machine in self.robot_state_machines.items():
-                state_machine.update(vision_data)
+                # Pass the current command to the state machine update
+                if hasattr(state_machine, "update"):
+                    state_machine.update(vision_data)
+                    print(
+                        f"Robot {robot_id} state updated to: {state_machine.current_state.value if hasattr(state_machine, 'current_state') else 'Unknown'}"
+                    )
 
     def set_game_controller_enabled(self, enabled):
         """Enable/disable game controller"""
