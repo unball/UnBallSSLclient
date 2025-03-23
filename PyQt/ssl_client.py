@@ -5,6 +5,7 @@ import copy
 import sys
 
 from PyQt5.QtCore import Qt, QTimer, QCoreApplication
+from PyQt5 import QtWidgets
 from PyQt5.QtWidgets import (
     QMainWindow,
     QVBoxLayout,
@@ -178,6 +179,41 @@ class SSLClientWindow(QMainWindow):
                     )
                     status_label.setText(f"Robot {robot_id} ({role}): {state}")
 
+        self.update_game_state_ui()
+
+    def update_game_state_ui(self):
+        """Update game state UI elements based on current game state"""
+        if not hasattr(self, "game") or not self.game:
+            return
+
+        if not hasattr(self, "game_state_dropdown"):
+            return
+
+        # Get current game state
+        current_state = "HALT"  # Default
+        if hasattr(self.game, "current_command") and self.game.current_command:
+            current_state = self.game.current_command
+
+        # Set current item in dropdown without triggering the change event
+        self.game_state_dropdown.blockSignals(True)
+        index = self.game_state_dropdown.findText(current_state)
+        if index >= 0:
+            self.game_state_dropdown.setCurrentIndex(index)
+        self.game_state_dropdown.blockSignals(False)
+
+        # Enable/disable the dropdown based on game state
+        # Only enable during HALT or STOP
+        can_change_state = current_state in ["HALT", "STOP"]
+        self.game_state_dropdown.setEnabled(can_change_state)
+
+        # Set a tooltip explaining why it's disabled
+        if not can_change_state:
+            self.game_state_dropdown.setToolTip(
+                "Game state can only be changed during HALT or STOP"
+            )
+        else:
+            self.game_state_dropdown.setToolTip("Select game state")
+
     def closeEvent(self, event):
         """Handle window close event"""
         # Restore original stdout
@@ -239,15 +275,6 @@ class SSLClientWindow(QMainWindow):
             for i in range(3):  # SSL-EL uses 3 robots
                 self.box_all_robots.addItem(f"Robot {i}")
 
-    def handle_force_start(self):
-        """Handle FORCE START button - start game and initialize behavior"""
-        if self.game:
-            # Start the game if not already started
-            self.start_game()
-
-            # Then send the FORCE_START command
-            self.handle_control_action("FORCE_START")
-
     def start_game(self):
         """Initialize and start the game"""
         if not self.game or not hasattr(self.game, "start"):
@@ -298,13 +325,40 @@ class SSLClientWindow(QMainWindow):
         if self.show_yellow:
             self.show_yellow.toggled.connect(self.update_team_visibility)
 
-    def handle_team_selection(self, team):
+    def handle_team_selection(self, team_text):
         """Handle team selection changes"""
-        if self.game:
-            is_yellow = team == "Time Amarelo"
-            print(f"Selected team: {'Yellow' if is_yellow else 'Blue'}")
-            # Update game configuration
-            self.game.config["match"]["team_color"] = "yellow" if is_yellow else "blue"
+        if hasattr(self, "game") and self.game:
+            is_yellow = "Amarelo" in team_text
+            team_color = "yellow" if is_yellow else "blue"
+
+            # Use the proper team switching method that we added to Game class
+            if hasattr(self.game, "switch_team_color"):
+                self.game.switch_team_color(team_color)
+            else:
+                # Fallback to existing implementation
+                print(f"Team selection changed to: {team_text}")
+                # Update game configuration
+                old_color = self.game.config["match"]["team_color"]
+                if team_color != old_color:
+                    print(f"Changing team color from {old_color} to {team_color}")
+                    self.game.config["match"]["team_color"] = team_color
+
+                    # Get current mode
+                    mode = "grSim"  # Default
+                    if hasattr(self, "state_game"):
+                        mode = self.state_game.currentText()
+
+                    # Switch to the appropriate controller
+                    if hasattr(self.game, "set_control_mode"):
+                        self.game.set_control_mode(mode, team_color)
+
+                    # Force state machine reinitialization
+                    if hasattr(self.game, "_initialize_robot_state_machines"):
+                        print("Reinitializing robot state machines with new team color")
+                        self.game._initialize_robot_state_machines()
+
+            # Update the UI to reflect team change
+            self.update_team_display(team_color)
 
     def setup_division_selector(self):
         self.division_combo = self.findChild(QComboBox, "division_combo")
@@ -321,19 +375,63 @@ class SSLClientWindow(QMainWindow):
         if not self.game:
             return
 
-        if action == "TIMEOUT":
-            # Request timeout
-            pass
-        elif action == "SUBSTITUTION":
-            # Request substitution
-            pass
+        # Use the set_game_state method if available
+        if hasattr(self.game, "set_game_state"):
+            self.game.set_game_state(action)
         else:
-            # Send command to game
+            # Fallback to existing send_command method
             self.game.send_command(action)
 
-    def update_visualization(self, checked):
-        print(f"A* visualization: {'enabled' if checked else 'disabled'}")
-        # Implement visualization update logic
+    def update_team_display(self, team_color):
+        """Update UI elements to show current team"""
+        # Update team label if it exists
+        if hasattr(self, "lblCurrentTeam"):
+            self.lblCurrentTeam.setText(
+                f"Current Team: {'Yellow' if team_color == 'yellow' else 'Blue'}"
+            )
+
+        # Update color indicators
+        bg_color = "gold" if team_color == "yellow" else "royalblue"
+        text_color = "black" if team_color == "yellow" else "white"
+
+        style = f"background-color: {bg_color}; color: {text_color}; padding: 5px;"
+
+        if hasattr(self, "teamIndicator"):
+            self.teamIndicator.setStyleSheet(style)
+
+        # Request field visualization update
+        if hasattr(self, "field_widget"):
+            self.field_widget.update()
+
+    def handle_force_start(self):
+        """Handle FORCE START button - start game and initialize behavior"""
+        if self.game:
+            # Start the game if not already started
+            self.start_game()
+
+            # Then send the FORCE_START command using the new set_game_state method if available
+            if hasattr(self.game, "set_game_state"):
+                self.game.set_game_state("FORCE_START")
+            else:
+                # Fallback to existing implementation
+                self.handle_control_action("FORCE_START")
+
+    def update_visualization(self):
+        """Force an update of the visualization"""
+        if hasattr(self, "field_viz"):
+            print("Updating field visualization")
+            self.field_viz.update()
+
+        # Update any team-specific UI elements
+        if hasattr(self, "lblTeamColor"):
+            team_color = self.game.config["match"]["team_color"]
+            self.lblTeamColor.setText(f"Team Color: {team_color.capitalize()}")
+
+            # You may also want to update the color itself
+            if team_color == "blue":
+                self.lblTeamColor.setStyleSheet("color: blue;")
+            else:
+                self.lblTeamColor.setStyleSheet("color: yellow;")
 
     def update_team_visibility(self):
         if hasattr(self, "field_widget"):
@@ -578,6 +676,54 @@ class SSLClientWindow(QMainWindow):
             # Force initial division setup after the window is fully loaded
             QTimer.singleShot(100, self.initial_division_setup)
 
+    def setup_team_ui_connections(self):
+        """Connect UI components related to team selection and game controls"""
+        # Connect team selection dropdown
+        if hasattr(self, "team_select"):
+            self.team_select.currentTextChanged.connect(self.handle_team_selection)
+
+        # If you have a team color dropdown, connect it as well
+        if hasattr(self, "team_color_select"):
+            self.team_color_select.currentTextChanged.connect(
+                self.handle_team_color_selection
+            )
+
+        # Connect game state buttons
+        self.connectGameStateButtons()
+
+    def connectGameStateButtons(self):
+        """Connect game state buttons to their handler functions"""
+        # Map button names to their actions
+        button_mapping = {
+            "halt_button": "HALT",
+            "stop_button": "STOP",
+            "force_start_button": "FORCE_START",
+            "normal_start_button": "NORMAL_START",
+            "timeout_button": "TIMEOUT",
+            "substitution_button": "SUBSTITUTION",
+            "free_kick_button": "FREE_KICK",
+            "kick_off_button": "KICK_OFF",
+            "penalty_button": "PENALTY",
+            "goal_kick_button": "GOAL_KICK",
+            "corner_kick_button": "CORNER_KICK",
+            "center_circle_button": "CENTER_CIRCLE",
+            "ball_placement_button": "BALL_PLACEMENT",
+            "penalty_mark_button": "PENALTY_MARK",
+        }
+
+        # Connect each button if it exists
+        for btn_name, action in button_mapping.items():
+            button = self.findChild(QPushButton, btn_name)
+            if button:
+                # Special handling for force start button
+                if btn_name == "force_start_button":
+                    button.clicked.connect(self.handle_force_start)
+                else:
+                    # Use lambda with default argument to capture the current value
+                    button.clicked.connect(
+                        lambda checked=False, a=action: self.handle_control_action(a)
+                    )
+
     def initial_division_setup(self):
         if hasattr(self, "field_widget"):
             initial_division = self.division_combo.currentText()
@@ -637,3 +783,71 @@ class SSLClientWindow(QMainWindow):
         self.debug_window.show()
         self.debug_window.raise_()
         self.debug_window.activateWindow()
+
+    def setup_game_state_dropdown(self):
+        """Set up a dropdown for game states"""
+        # Create a horizontal layout with a label and dropdown
+        self.game_state_layout = QtWidgets.QHBoxLayout()
+        self.game_state_label = QtWidgets.QLabel("Game State:")
+        self.game_state_dropdown = QtWidgets.QComboBox()
+
+        # Add states to dropdown
+        game_states = [
+            "HALT",
+            "STOP",
+            "FORCE_START",
+            "NORMAL_START",
+            "KICK-OFF",
+            "FREE-KICK",
+            "PENALTY",
+            "GOAL_KICK",
+            "CORNER_KICK",
+            "SUBSTITUTION",
+            "BALL_PLACEMENT",
+        ]
+
+        for state in game_states:
+            self.game_state_dropdown.addItem(state)
+
+        # Add the label and dropdown to the layout
+        self.game_state_layout.addWidget(self.game_state_label)
+        self.game_state_layout.addWidget(self.game_state_dropdown)
+
+        # Find a suitable place to add the layout in the UI
+        # Option 1: Add near the team selection
+        layout_widget = self.findChild(QtWidgets.QWidget, "layoutWidget")
+        if layout_widget:
+            grid_layout = self.findChild(QtWidgets.QGridLayout, "gridLayout_2")
+            if grid_layout:
+                # Insert into the grid layout
+                self.game_state_label = QtWidgets.QLabel("Game State:")
+                grid_layout.addWidget(self.game_state_label, 1, 0, 1, 1)
+                grid_layout.addWidget(self.game_state_dropdown, 1, 1, 1, 3)
+
+        # Option 2: Add to status frame
+        status_frame = self.findChild(QtWidgets.QFrame, "status_frame")
+        if status_frame:
+            # Add to status layout
+            self.status_layout.addWidget(self.game_state_label)
+            self.status_layout.addWidget(self.game_state_dropdown)
+
+        # Connect the dropdown change event
+        self.game_state_dropdown.currentTextChanged.connect(
+            self.handle_game_state_change
+        )
+
+        # Initially disable the dropdown (will be enabled in HALT or STOP states)
+        self.game_state_dropdown.setEnabled(False)
+
+    def handle_game_state_change(self, state):
+        """Handle game state change from dropdown"""
+        if not hasattr(self, "game") or not self.game:
+            return
+
+        # Use the set_game_state method if available
+        if hasattr(self.game, "set_game_state"):
+            print(f"Setting game state to {state} from dropdown")
+            self.game.set_game_state(state)
+        else:
+            # Fallback to existing method
+            self.handle_control_action(state)

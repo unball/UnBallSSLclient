@@ -119,9 +119,9 @@
       <property name="geometry">
        <rect>
         <x>940</x>
-        <y>320</y>
+        <y>370</y>
         <width>244</width>
-        <height>381</height>
+        <height>331</height>
        </rect>
       </property>
       <property name="frameShape">
@@ -389,6 +389,29 @@
       <item>
        <property name="text">
         <string>Robot 1 </string>
+       </property>
+      </item>
+     </widget>
+     <widget class="QComboBox" name="states">
+      <property name="geometry">
+       <rect>
+        <x>940</x>
+        <y>320</y>
+        <width>241</width>
+        <height>41</height>
+       </rect>
+      </property>
+      <property name="toolTip">
+       <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+      </property>
+      <item>
+       <property name="text">
+        <string>FOLLOW FLUX</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>CORNER_KICK</string>
        </property>
       </item>
      </widget>

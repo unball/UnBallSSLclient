@@ -135,6 +135,47 @@ class Game:
             }
             # print(f"Updated field bounds: {self.field_bounds}")  # Debug print
 
+    def set_game_state(self, state):
+        """
+        Update the game state based on referee commands
+
+        Args:
+            state: Game state command from UI or referee (HALT, STOP, FORCE_START, etc.)
+        """
+        print(f"Setting game state to: {state}")
+        self.current_command = state
+
+        # Update referee data with this command to ensure robot state machines respect it
+        if hasattr(self, "last_referee_data") and self.last_referee_data:
+            self.last_referee_data["command"] = state
+            self.last_referee_data["can_play"] = state in [
+                "FORCE_START",
+                "NORMAL_START",
+            ]
+
+        # Directly implement behavior for different commands
+        if state == "HALT":
+            # Stop all robots immediately
+            for i in range(3):  # Assuming 3 robots per team
+                self.blue_robots.send_global_velocity(i, 0, 0, 0)
+                self.yellow_robots.send_global_velocity(i, 0, 0, 0)
+            print("HALT: All robots stopped")
+
+        elif state == "STOP":
+            # Robots can move but must stay away from ball
+            print("STOP: Robots must stay away from ball")
+            # Let state machines handle this in their next update
+
+        elif state == "FORCE_START" or state == "NORMAL_START":
+            print(f"{state}: Game starting, robots can move freely")
+            # Game is now in play, robots will follow their state machines
+
+        # Update all robot state machines immediately to respect new state
+        vision_data = self.get_vision_data()
+        if vision_data:
+            for robot_id, state_machine in self.robot_state_machines.items():
+                state_machine.update(vision_data)
+
     def set_game_controller_enabled(self, enabled):
         """Enable/disable game controller"""
         self.game_controller_enabled = enabled
@@ -194,14 +235,94 @@ class Game:
             except Exception as e:
                 print(f"Error in movement execution: {str(e)}")
 
+    def switch_team_color(self, new_team_color):
+        """
+        Switch the team color and reinitialize robots with proper state
+
+        Args:
+            new_team_color: New team color ("blue" or "yellow")
+        """
+        if new_team_color not in ["blue", "yellow"]:
+            print(f"Invalid team color: {new_team_color}")
+            return
+
+        old_color = self.config["match"]["team_color"]
+        if new_team_color == old_color:
+            print(f"Team color already set to {new_team_color}")
+            return
+
+        print(f"Switching team color from {old_color} to {new_team_color}")
+
+        # Stop all robots before switching
+        for i in range(3):
+            self.blue_robots.send_global_velocity(i, 0, 0, 0)
+            self.yellow_robots.send_global_velocity(i, 0, 0, 0)
+
+        # Update configuration
+        self.config["match"]["team_color"] = new_team_color
+
+        # Get current game state
+        current_game_state = "HALT"  # Default to HALT when switching teams
+        if hasattr(self, "current_command") and self.current_command:
+            current_game_state = self.current_command
+
+        # Get current controller mode
+        current_mode = "grSim"  # Default
+        for mode in self.controllers:
+            for color in self.controllers[mode]:
+                if self.active_controller == self.controllers[mode][color]:
+                    current_mode = mode
+                    break
+
+        # Switch to appropriate controller
+        self.set_control_mode(current_mode, new_team_color)
+
+        # Reinitialize robot state machines with new team color
+        self._initialize_robot_state_machines()
+
+        # Immediately set robots to halt state
+        self.set_game_state(current_game_state)
+
+        print(
+            f"Team color switched to {new_team_color}, robots initialized in {current_game_state} state"
+        )
+
     def set_control_mode(self, mode: str, team_color: str):
-        """Switch between grSim and IRL control"""
-        if mode in self.controllers and team_color in self.controllers[mode]:
-            old_controller = self.active_controller
+        """
+        Switch between grSim and IRL control and update team color
+
+        Args:
+            mode: Control mode ('grSim' or 'IRL')
+            team_color: Team color ('blue' or 'yellow')
+        """
+        if mode not in self.controllers or team_color not in self.controllers[mode]:
+            print(f"Invalid mode '{mode}' or team color '{team_color}'")
+            return
+
+        # Update the team color in configuration
+        if team_color != self.config["match"]["team_color"]:
+            print(
+                f"Changing team color from {self.config['match']['team_color']} to {team_color}"
+            )
+            self.config["match"]["team_color"] = team_color
+
+            # Reinitialize robot state machines with new team color
+            if hasattr(self, "robot_state_machines"):
+                self._initialize_robot_state_machines()
+                print("Reinitialized robot state machines with new team color")
+
+        # Only change the controller if it's different
+        if self.active_controller != self.controllers[mode][team_color]:
+            # Stop the old controller
+            if self.active_controller:
+                self.active_controller.stop()
+
+            # Set and start the new controller
             self.active_controller = self.controllers[mode][team_color]
-            old_controller.stop()
             self.active_controller.start()
             print(f"Switched to {mode} controller for {team_color} team")
+        else:
+            print(f"Already using {mode} controller for {team_color} team")
 
     def handle_sim_state_change(self, state):
         if not self.game:
@@ -212,12 +333,47 @@ class Game:
         self.game.set_control_mode(state, team_color)
 
     def handle_team_selection(self, team):
-        if not self.game:
-            return
-        is_yellow = team == "Time Amarelo"
-        team_color = "yellow" if is_yellow else "blue"
-        mode = self.state_game.currentText()
-        self.game.set_control_mode(mode, team_color)
+        """Handle team selection changes"""
+        if self.game:
+            is_yellow = team == "Time Amarelo"
+            team_color = "yellow" if is_yellow else "blue"
+            print(f"Selected team: {team_color}")
+
+            # Update game configuration
+            self.game.config["match"]["team_color"] = team_color
+
+            # Get current control mode
+            mode = self.state_game.currentText()
+
+            # Switch to the appropriate controller
+            self.game.set_control_mode(mode, team_color)
+
+            # We need to reinitialize the robot state machines with the new team color
+            # First stop any existing state machines
+            for robot_id in self.game.robot_state_machines:
+                self.game.robot_state_machines[robot_id].current_state = RobotState.IDLE
+
+            # Reinitialize state machines with new team color
+            self.game._initialize_robot_state_machines()
+
+            # Update UI to reflect team change
+            self.update_team_display(team_color)
+
+            print(f"Successfully switched to {team_color} team")
+
+    def update_team_display(self, team_color):
+        """Update the UI to reflect the selected team"""
+        # This function updates any UI elements that need to change when the team changes
+        # For example, changing colors, labels, etc.
+
+        # You could add code here to update team labels, colors, etc.
+        self.lblCurrentTeam.setText(
+            f"Current Team: {'Yellow' if team_color == 'yellow' else 'Blue'}"
+        )
+
+        # Force update of the field visualization if it exists
+        if hasattr(self, "field_viz") and self.field_viz:
+            self.field_viz.update()
 
     def test_movement(self):
         """Test random movements for robots"""
@@ -650,15 +806,22 @@ def main():
         # Start game systems
         game.start()
 
-        # Handle Ctrl+C gracefully
         def signal_handler(sig, frame):
             print("\nShutting down systems gracefully...")
+
+            # Disable DEBUG_ROBOT_BEHAVIOR to prevent more debug printing
+            import RobotBehavior.robot_state_machine as rsm
+
+            rsm.DEBUG_ROBOT_BEHAVIOR = False
+
+            # Stop all printing in threads
+            sys.stdout.flush()
 
             # Stop the game if it exists
             if "game" in globals():
                 game.stop()
 
-            # Sleep briefly to allow threads to clean up
+            # Give a short time for threads to clean up
             time.sleep(0.5)
             print("Shutdown complete")
             sys.exit(0)
