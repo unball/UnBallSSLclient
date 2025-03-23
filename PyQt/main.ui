@@ -414,6 +414,46 @@
         <string>CORNER_KICK</string>
        </property>
       </item>
+      <item>
+       <property name="text">
+        <string>HALT</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>STOP</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>FORCE_START</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>NORMAL_START</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>KICK-OFF</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>FREE-KICK</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>PENALTY</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>GOAL_KICK</string>
+       </property>
+      </item>
      </widget>
     </widget>
     <widget class="QWidget" name="tab_2">

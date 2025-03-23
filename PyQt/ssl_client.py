@@ -186,33 +186,28 @@ class SSLClientWindow(QMainWindow):
         if not hasattr(self, "game") or not self.game:
             return
 
-        if not hasattr(self, "game_state_dropdown"):
+        if not hasattr(self, "game_state_dropdown") or not self.game_state_dropdown:
             return
 
         # Get current game state
-        current_state = "HALT"  # Default
+        current_state = None
         if hasattr(self.game, "current_command") and self.game.current_command:
             current_state = self.game.current_command
 
-        # Set current item in dropdown without triggering the change event
-        self.game_state_dropdown.blockSignals(True)
-        index = self.game_state_dropdown.findText(current_state)
-        if index >= 0:
-            self.game_state_dropdown.setCurrentIndex(index)
-        self.game_state_dropdown.blockSignals(False)
+        # Only update if we have a valid state
+        if current_state:
+            # Set current item in dropdown without triggering the change event
+            self.game_state_dropdown.blockSignals(True)
+            index = self.game_state_dropdown.findText(current_state)
+            if index >= 0:
+                self.game_state_dropdown.setCurrentIndex(index)
+            self.game_state_dropdown.blockSignals(False)
 
-        # Enable/disable the dropdown based on game state
-        # Only enable during HALT or STOP
-        can_change_state = current_state in ["HALT", "STOP"]
-        self.game_state_dropdown.setEnabled(can_change_state)
+            # Update tooltip with current state
+            self.game_state_dropdown.setToolTip(f"Current game state: {current_state}")
 
-        # Set a tooltip explaining why it's disabled
-        if not can_change_state:
-            self.game_state_dropdown.setToolTip(
-                "Game state can only be changed during HALT or STOP"
-            )
-        else:
-            self.game_state_dropdown.setToolTip("Select game state")
+        # We won't disable the dropdown since it's part of normal UI operation
+        # This allows users to select behaviors like "FOLLOW_FLUX" at any time
 
     def closeEvent(self, event):
         """Handle window close event"""
@@ -785,14 +780,32 @@ class SSLClientWindow(QMainWindow):
         self.debug_window.activateWindow()
 
     def setup_game_state_dropdown(self):
-        """Set up a dropdown for game states"""
-        # Create a horizontal layout with a label and dropdown
-        self.game_state_layout = QtWidgets.QHBoxLayout()
-        self.game_state_label = QtWidgets.QLabel("Game State:")
-        self.game_state_dropdown = QtWidgets.QComboBox()
+        """Set up a dropdown for game states in the UI"""
+        # Find existing states dropdown in the UI
+        self.game_state_dropdown = self.findChild(QComboBox, "states")
 
-        # Add states to dropdown
+        if not self.game_state_dropdown:
+            print("Warning: Could not find the 'states' combo box in the UI")
+            return
+
+        print(
+            f"Found states dropdown with {self.game_state_dropdown.count()} initial items"
+        )
+
+        # Store initial items if any
+        initial_items = []
+        for i in range(self.game_state_dropdown.count()):
+            initial_items.append(self.game_state_dropdown.itemText(i))
+
+        print(f"Initial items: {initial_items}")
+
+        # Clear existing items first
+        self.game_state_dropdown.clear()
+
+        # Add game states to dropdown
         game_states = [
+            "FOLLOW_FLUX",  # Keep this as first item since it was in your UI
+            "CORNER_KICK",  # Keep this as it was in your UI
             "HALT",
             "STOP",
             "FORCE_START",
@@ -801,47 +814,80 @@ class SSLClientWindow(QMainWindow):
             "FREE-KICK",
             "PENALTY",
             "GOAL_KICK",
-            "CORNER_KICK",
-            "SUBSTITUTION",
-            "BALL_PLACEMENT",
         ]
 
+        # Add the states
         for state in game_states:
             self.game_state_dropdown.addItem(state)
 
-        # Add the label and dropdown to the layout
-        self.game_state_layout.addWidget(self.game_state_label)
-        self.game_state_layout.addWidget(self.game_state_dropdown)
+        print(f"Added {len(game_states)} game states to dropdown")
 
-        # Find a suitable place to add the layout in the UI
-        # Option 1: Add near the team selection
-        layout_widget = self.findChild(QtWidgets.QWidget, "layoutWidget")
-        if layout_widget:
-            grid_layout = self.findChild(QtWidgets.QGridLayout, "gridLayout_2")
-            if grid_layout:
-                # Insert into the grid layout
-                self.game_state_label = QtWidgets.QLabel("Game State:")
-                grid_layout.addWidget(self.game_state_label, 1, 0, 1, 1)
-                grid_layout.addWidget(self.game_state_dropdown, 1, 1, 1, 3)
-
-        # Option 2: Add to status frame
-        status_frame = self.findChild(QtWidgets.QFrame, "status_frame")
-        if status_frame:
-            # Add to status layout
-            self.status_layout.addWidget(self.game_state_label)
-            self.status_layout.addWidget(self.game_state_dropdown)
-
-        # Connect the dropdown change event
+        # Connect the change event
         self.game_state_dropdown.currentTextChanged.connect(
             self.handle_game_state_change
         )
 
-        # Initially disable the dropdown (will be enabled in HALT or STOP states)
-        self.game_state_dropdown.setEnabled(False)
+        # Initially update state from game if available
+        if (
+            self.game
+            and hasattr(self.game, "current_command")
+            and self.game.current_command
+        ):
+            index = self.game_state_dropdown.findText(self.game.current_command)
+            if index >= 0:
+                self.game_state_dropdown.setCurrentIndex(index)
+                print(
+                    f"Set dropdown to current game state: {self.game.current_command}"
+                )
+            else:
+                print(
+                    f"Game state '{self.game.current_command}' not found in dropdown items"
+                )
+        else:
+            # Default to FOLLOW_FLUX if no game state is set
+            index = self.game_state_dropdown.findText("FOLLOW_FLUX")
+            if index >= 0:
+                self.game_state_dropdown.setCurrentIndex(index)
+                print("Set dropdown default to FOLLOW_FLUX")
+            else:
+                print("FOLLOW_FLUX not found in dropdown items")
+
+        # Print final state
+        print(f"Dropdown now has {self.game_state_dropdown.count()} items")
 
     def handle_game_state_change(self, state):
         """Handle game state change from dropdown"""
         if not hasattr(self, "game") or not self.game:
+            print("Game instance not available, can't change state")
+            return
+
+        print(f"Game state dropdown changed to: {state}")
+
+        # Handle special states like FOLLOW_FLUX that are behavior selections, not game states
+        if state == "FOLLOW_FLUX" or state == "CORNER_KICK":
+            print(f"Selected behavior mode: {state}")
+            # This is not a game state command but a behavior selection
+            # You could implement special behavior here if needed
+            return
+
+        # Check if we're allowed to change state (only during HALT or STOP)
+        current_state = None
+        if hasattr(self.game, "current_command") and self.game.current_command:
+            current_state = self.game.current_command
+            print(f"Current game state: {current_state}")
+
+        can_change_state = current_state in ["HALT", "STOP"] or not current_state
+
+        if not can_change_state and state != current_state:
+            # If trying to change to a different state when not allowed, show a message
+            QMessageBox.warning(
+                self,
+                "Game State Change Not Allowed",
+                f"Game state can only be changed during HALT or STOP.\nCurrent state: {current_state}",
+            )
+
+            # Reset dropdown to current state
+            self.update_game_state_ui()
             return
 
         # Use the set_game_state method if available
@@ -850,4 +896,5 @@ class SSLClientWindow(QMainWindow):
             self.game.set_game_state(state)
         else:
             # Fallback to existing method
+            print(f"Using handle_control_action for state: {state}")
             self.handle_control_action(state)
