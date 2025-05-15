@@ -4,6 +4,8 @@ import math
 import copy
 import sys
 
+DEBUG_ROBOT_BEHAVIOR = False
+
 from PyQt5.QtCore import Qt, QTimer, QCoreApplication
 from PyQt5 import QtWidgets
 from PyQt5.QtWidgets import (
@@ -25,6 +27,7 @@ from PyQt.main_ui import Ui_MainWindow
 from .settings_ui import Ui_Dialog
 from .field_visualization import FieldVisualization
 from .debug_window import DebugWindow, DebugStreamRedirector
+from RobotBehavior.robot_states import RobotState
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -504,76 +507,105 @@ class SSLClientWindow(QMainWindow):
     def handle_force_start(self):
         """Handle FORCE START button - start game and initialize behavior"""
         if not self.game:
-            print("No game instance available")
+            if DEBUG_ROBOT_BEHAVIOR:
+                print("UI: No game instance available for FORCE_START")
             return
 
-        print("FORCE START button clicked - starting game...")
+        if DEBUG_ROBOT_BEHAVIOR:
+            print("UI: FORCE START button clicked - starting game...")
+        self.start_game()  # Ensures game systems are running and SMs initialized
 
-        # Start the game if not already started
-        self.start_game()
-
-        # Make sure robot state machines are initialized
         if (
             not hasattr(self.game, "robot_state_machines")
             or not self.game.robot_state_machines
         ):
-            print("Initializing robot state machines...")
+            if DEBUG_ROBOT_BEHAVIOR:
+                print("UI: Initializing robot state machines for FORCE_START...")
             self.game._initialize_robot_state_machines()
 
-        # Apply FORCE_START command
         if hasattr(self.game, "set_game_state"):
-            print("Setting game state to FORCE_START")
+            if DEBUG_ROBOT_BEHAVIOR:
+                print("UI: Setting game state to FORCE_START")
             self.game.set_game_state("FORCE_START")
         else:
-            # Fallback to existing implementation
-            print("Using legacy send_command method")
+            if DEBUG_ROBOT_BEHAVIOR:
+                print("UI: Using legacy send_command method for FORCE_START")
             self.game.send_command("FORCE_START")
 
-        # Directly trigger robot motion
+        # Directly trigger robot updates. The SM's update method should handle movement.
         vision_data = self.game.get_vision_data()
         if vision_data and hasattr(self.game, "robot_state_machines"):
-            print("Triggering immediate robot updates with new state")
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    "UI: Triggering immediate robot updates with new state for FORCE_START"
+                )
             for robot_id, state_machine in self.game.robot_state_machines.items():
-                print(f"Updating robot {robot_id}")
-                state_machine.update(vision_data)
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(f"UI: Updating robot {robot_id} for FORCE_START")
+                state_machine.update(
+                    vision_data
+                )  # This will call _decide_next_action -> _process_movement -> _follow_path
+        else:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    "UI: No vision data or no state machines for FORCE_START forced update."
+                )
 
-        # Update UI to reflect the changed state
         self.update_game_state_ui()
-
-        print("FORCE START sequence complete")
+        if DEBUG_ROBOT_BEHAVIOR:
+            print("UI: FORCE START sequence complete")
 
     def handle_normal_start(self):
         """Handle NORMAL START button - start game and initialize normal behavior"""
         if self.game:
-            # Start the game if not already started
-            self.start_game()
+            self.start_game()  # Ensures game systems are running and SMs initialized
 
-            # Then send the NORMAL_START command using the set_game_state method
             if hasattr(self.game, "set_game_state"):
-                print("Sending NORMAL_START command and forcing robot updates")
+                if DEBUG_ROBOT_BEHAVIOR:  # Assuming you might want a global debug flag
+                    print("UI: Sending NORMAL_START command and forcing robot updates")
 
-                # Set the game state
                 self.game.set_game_state("NORMAL_START")
 
-                # Explicitly update all robot state machines to ensure they respond
-                vision_data = self.game.get_vision_data()
+                vision_data = self.game.get_vision_data()  # Get fresh vision data
                 if vision_data and hasattr(self.game, "robot_state_machines"):
                     for (
                         robot_id,
                         state_machine,
                     ) in self.game.robot_state_machines.items():
                         if hasattr(state_machine, "update"):
-                            # Force update with latest vision data
-                            state_machine.update(vision_data)
-                            print(f"Forced update of robot {robot_id}")
-
-                            # Also make sure the robot is in motion
-                            if hasattr(state_machine, "_follow_path"):
-                                state_machine._follow_path()
-                                print(f"Forced path following for robot {robot_id}")
+                            # state_machine.update(vision_data) # update will call _decide_next_action which calls _process_movement -> _follow_path
+                            # So, an explicit call to _follow_path here might be redundant if update handles it.
+                            # However, if you want to be absolutely sure it moves NOW:
+                            current_pos = (
+                                state_machine._get_current_pos()
+                            )  # Get pos for this specific robot
+                            if current_pos:
+                                if DEBUG_ROBOT_BEHAVIOR:
+                                    print(
+                                        f"UI: Forcing path following for robot {robot_id} after NORMAL_START."
+                                    )
+                                # Ensure the state machine has a target and is in a movable state
+                                # state_machine.current_state = RobotState.MOVING_TO_BALL # Or appropriate start state
+                                # state_machine.target_position = state_machine.home_position # Or some initial target
+                                state_machine.update(
+                                    vision_data
+                                )  # This should trigger the decision and movement
+                                # The line below was causing the error, let's see if update() is enough
+                                # state_machine._follow_path(current_pos)
+                            elif DEBUG_ROBOT_BEHAVIOR:
+                                print(
+                                    f"UI: Robot {robot_id} has no position, cannot force _follow_path."
+                                )
+                else:
+                    if DEBUG_ROBOT_BEHAVIOR:
+                        print(
+                            "UI: No vision data or no state machines for NORMAL_START forced update."
+                        )
             else:
-                # Fallback to existing implementation
+                # Fallback to existing implementation (if any)
                 self.handle_control_action("NORMAL_START")
+
+            self.update_game_state_ui()  # Update UI after action
 
     def update_visualization(self):
         """Force an update of the visualization"""

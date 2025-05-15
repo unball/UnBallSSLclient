@@ -1,1319 +1,1353 @@
+# RobotBehavior/robot_state_machine.py
 import math
+import time
 from threading import Lock
-from typing import Tuple, Dict, Optional, List
+from typing import Tuple, Dict, Optional, List, Any  # Added Any for game object
 from .robot_states import RobotState, RobotRole
 
-DEBUG_ROBOT_BEHAVIOR = False
+# --- Constants for Behavior Tuning ---
+DEBUG_ROBOT_BEHAVIOR = True  # Master debug flag for this module
+
+# Pathing
+PATH_LOOKAHEAD_DISTANCE = 0.2  # Meters for PathFollower
+PATH_REPLAN_INTERVAL = (
+    0.3  # Seconds between forced replans if target hasn't changed much
+)
+PATH_TARGET_CHANGE_THRESHOLD = (
+    0.1  # Meters, how much target must change to force replan
+)
+
+# Movement
+ROBOT_MAX_LINEAR_SPEED = 1.5  # m/s
+ROBOT_MAX_ANGULAR_SPEED = math.pi * 1.5  # rad/s
+APPROACH_SLOWDOWN_DISTANCE = 0.5  # m, distance to start slowing down
+FINE_TUNE_DISTANCE = 0.05  # m, very close distance for minimal speed
+TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_HIGH = math.pi / 2  # rad (90 deg)
+TURN_SPEED_REDUCTION_FACTOR_HIGH = 0.3  # Reduce speed to 30% for large turns
+TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_LOW = math.pi / 4  # rad (45 deg)
+TURN_SPEED_REDUCTION_FACTOR_LOW = 0.6  # Reduce speed to 60% for medium turns
+FIELD_BOUNDARY_MARGIN = 0.1  # m, safety margin from field edges for targets
+IMMEDIATE_BOUNDARY_STOP_MARGIN = 0.05  # m, margin to stop if already over edge
+
+# Game Rules
+BALL_AVOIDANCE_DISTANCE_STOP = 0.5  # m, distance to keep from ball during STOP
+BALL_AVOIDANCE_DISTANCE_OPPONENT_SET_PIECE = 0.5  # m, distance for opponent set pieces
+OWN_HALF_OFFSET = 0.05  # m, small offset to ensure robot is clearly in its half
+
+# Role Specific
+ATTACKER_BALL_OWNERSHIP_THRESHOLD = 0.15  # m, distance to consider ball "owned"
+GOALKEEPER_GOAL_LINE_OFFSET = 0.05  # m, how far in front of goal line to stand
 
 
 class PathFollower:
-    """Manages following a path smoothly"""
+    """Manages following a path smoothly using a lookahead point."""
 
-    def __init__(self, lookahead_distance=0.2):
+    def __init__(self, lookahead_distance: float = PATH_LOOKAHEAD_DISTANCE):
         self.lookahead_distance = lookahead_distance
-        print(f"PathFollower initialized with lookahead distance: {lookahead_distance}")
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"PathFollower initialized with lookahead: {self.lookahead_distance}m"
+            )
 
     def get_target_point(
         self, current_pos: Tuple[float, float], path: List[Tuple[float, float]]
     ) -> Tuple[float, float]:
-        """Get target point along path based on lookahead distance"""
         if not path:
-            print("WARNING: Empty path provided to PathFollower")  # Not guarded
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"PathFollower WARNING: Empty path for current_pos {current_pos}")
             return current_pos
 
-        # If we're close to the end, return the end point
-        end_distance = self._distance(current_pos, path[-1])
-        if end_distance < self.lookahead_distance:
-            print(
-                f"Close to end point ({end_distance:.2f}m), targeting end directly"
-            )  # Not guarded
-            return path[-1]
+        # If current_pos is already very close to the final goal of the path, target it directly.
+        final_goal = path[-1]
+        if self._distance(current_pos, final_goal) < self.lookahead_distance:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"PathFollower: Close to final goal {final_goal}. Targeting directly."
+                )
+            return final_goal
 
-        # Find the point along the path that's approximately lookahead_distance away
-        for i in range(len(path)):
-            if self._distance(current_pos, path[i]) >= self.lookahead_distance:
+        # Iterate through path segments to find the lookahead point
+        for i in range(len(path) - 1):
+            p1 = path[i]
+            p2 = path[i + 1]
+
+            # Project current_pos onto the segment p1-p2
+            # This is a more robust way to find the "closest point on path"
+            # and then find the lookahead from there.
+            # For simplicity, we'll stick to iterating points for now,
+            # but Pure Pursuit algorithm would be more advanced here.
+
+            # If a point on the path is beyond lookahead_distance, it's a candidate
+            if self._distance(current_pos, p2) >= self.lookahead_distance:
+                # Basic interpolation: if p2 is too far, find a point on segment p1-p2
+                # For now, just picking p2 is often good enough if path resolution is decent.
                 if DEBUG_ROBOT_BEHAVIOR:
-                    print(f"Found lookahead point at index {i} in path")  # Not guarded
-                return path[i]
+                    print(
+                        f"PathFollower: Lookahead point {p2} from path. Current: {current_pos}"
+                    )
+                return p2
 
-        # Default to last point
-        print("No suitable point found, using last path point")  # Not guarded
-        return path[-1]
+        # If no point is far enough, or we reached the end of path points, target final goal.
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"PathFollower: Reached end of path or no suitable lookahead. Targeting final goal {final_goal}. Current: {current_pos}"
+            )
+        return final_goal
 
-    def _distance(
-        self, point1: Tuple[float, float], point2: Tuple[float, float]
-    ) -> float:
-        """Calculate Euclidean distance between two points"""
-        return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
-
-    def _distance(
-        self, point1: Tuple[float, float], point2: Tuple[float, float]
-    ) -> float:
-        """Calculate Euclidean distance between two points"""
-        return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+    def _distance(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
 
 class RobotStateMachine:
-    def __init__(self, robot_id: int, team_color: str, game):
+    def __init__(
+        self, robot_id: int, team_color: str, game: Any
+    ):  # Use Any for game type hint
         self.robot_id = robot_id
-        self.team_color = team_color
+        self.team_color = team_color.lower()  # Ensure consistent casing
         self.game = game
-        self.current_state = RobotState.IDLE
-        self.role = None
+        self.current_state: RobotState = RobotState.IDLE
+        self.role: Optional[RobotRole] = None
         self.target_position: Optional[Tuple[float, float]] = None
+
         self.state_lock = Lock()
-        self.path_follower = PathFollower(lookahead_distance=0.3)
-        self.last_path = []
-        self.path_replan_time = 0  # Track when we last requested a path
-        self.replan_threshold = 0.5  # Seconds between replanning
+        self.path_follower = PathFollower()
 
-    def _get_current_pos(self) -> Optional[Tuple[float, float]]:
-        """Get current robot position from vision"""
+        self.current_path: List[Tuple[float, float]] = []
+        self.last_path_request_time: float = 0.0
+        self.last_target_for_path: Optional[Tuple[float, float]] = None
+
+        # Home position should be defined by subclasses based on role and field bounds
+        self.home_position: Tuple[float, float] = (0.0, 0.0)
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(f"RobotStateMachine {self.robot_id} ({self.team_color}) initialized.")
+
+    def _get_current_pos(self):
         vision_data = self.game.get_vision_data()
         if not vision_data:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"Robot {self.robot_id}: _get_current_pos - No vision_data object."
+                )
             return None
-
         team_key = "robotsBlue" if self.team_color == "blue" else "robotsYellow"
-        robot_data = vision_data.get(team_key, {}).get(self.robot_id)
 
-        if robot_data and robot_data["x"] is not None:
+        # Ensure self.robot_id is an int for lookup
+        robot_data = vision_data.get(team_key, {}).get(
+            self.robot_id
+        )  # Direct int lookup
+
+        if (
+            robot_data
+            and robot_data.get("x") is not None
+            and robot_data.get("y") is not None
+        ):
             return (robot_data["x"], robot_data["y"])
-        return None
-
-    def _get_current_orientation(self) -> Optional[float]:
-        """Get current robot orientation from vision"""
-        vision_data = self.game.get_vision_data()
-        if not vision_data:
+        else:
+            if DEBUG_ROBOT_BEHAVIOR:
+                # print(f"Robot {self.robot_id} ({team_key}): Position data not found or incomplete in vision. Data: {vision_data.get(team_key, {}).keys()}")
+                pass  # This can be very noisy, enable if needed
             return None
 
+    def _get_current_orientation(self):
+        vision_data = self.game.get_vision_data()
+        if not vision_data:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"Robot {self.robot_id}: _get_current_orientation - No vision_data object."
+                )
+            return None
         team_key = "robotsBlue" if self.team_color == "blue" else "robotsYellow"
-        robot_data = vision_data.get(team_key, {}).get(self.robot_id)
+        robot_data = vision_data.get(team_key, {}).get(
+            self.robot_id
+        )  # Direct int lookup
 
-        if robot_data and robot_data["theta"] is not None:
+        if robot_data and robot_data.get("theta") is not None:
             return robot_data["theta"]
-        return None
+        else:
+            # if DEBUG_ROBOT_BEHAVIOR: print(f"Robot {self.robot_id} ({team_key}): Orientation data not found or incomplete.")
+            pass
+            return None
 
     def update(self, vision_data: Dict):
-        """Update robot state based on vision data and game state"""
         with self.state_lock:
-            # Check game state first
-            game_state = None
-            team_for_action = None
-
-            # Get current game state from referee data
-            referee_data = self.game.get_referee_data()
-            if referee_data:
-                game_state = referee_data.get("command")
-                team_for_action = referee_data.get("team")
-                can_play = referee_data.get("can_play", False)
-
+            current_pos = self._get_current_pos()
+            if not current_pos:
                 if DEBUG_ROBOT_BEHAVIOR:
-                    print(
-                        f"Robot {self.robot_id} update - Game state: {game_state}, Team: {team_for_action}, Can play: {can_play}"
-                    )
+                    print(f"Robot {self.robot_id}: No position, cannot update.")
+                # Consider stopping the robot if it was moving
+                # self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
+                return
 
-                # Check if we're in a pre-kickoff state
-                pre_kickoff_states = [
-                    "HALT",
-                    "STOP",
-                    "PREPARE_KICKOFF_BLUE",
-                    "PREPARE_KICKOFF_YELLOW",
-                ]
-                if game_state in pre_kickoff_states:
-                    # Get robot position
-                    current_pos = self._get_current_pos()
-                    if current_pos:
-                        # Define halfway line
-                        halfway_line = 0
+            referee_data = self.game.get_referee_data()
 
-                        # Enforce robots to stay in their own half
-                        if self.team_color == "blue" and current_pos[0] > halfway_line:
-                            self.current_state = RobotState.RETURNING
-                            self.target_position = (-0.5, current_pos[1])
-                            self.game.path_planner.request_path(
-                                self.robot_id, current_pos, self.target_position
-                            )
-                            self._follow_path()
-                            return
-                        elif (
-                            self.team_color == "yellow"
-                            and current_pos[0] < halfway_line
-                        ):
-                            self.current_state = RobotState.RETURNING
-                            self.target_position = (0.5, current_pos[1])
-                            self.game.path_planner.request_path(
-                                self.robot_id, current_pos, self.target_position
-                            )
-                            self._follow_path()
-                            return
+            action_taken_by_referee_logic = self._handle_referee_commands(
+                vision_data, referee_data, current_pos
+            )
 
-                # Handle specific game states
-                if game_state == "HALT":
-                    # Immediately stop robot
-                    if DEBUG_ROBOT_BEHAVIOR:
-                        print(f"Robot {self.robot_id}: HALT - Stopping immediately")
-                    if hasattr(self.game, "active_controller"):
-                        self.game.active_controller.send_global_velocity(
-                            self.robot_id, 0, 0, 0
-                        )
-                    self.current_state = RobotState.IDLE
-                    return
+            if not action_taken_by_referee_logic:
+                # If referee didn't dictate a specific action, proceed with role-based decision
+                self._decide_next_action(vision_data, referee_data, current_pos)
 
-                elif game_state == "STOP":
-                    # Can move but stay away from ball
-                    if DEBUG_ROBOT_BEHAVIOR:
-                        print(f"Robot {self.robot_id}: STOP - Moving away from ball")
-                    self.current_state = RobotState.RETURNING
-                    self.target_position = self.home_position
+    def _handle_referee_commands(
+        self,
+        vision_data: Dict,
+        referee_data: Optional[Dict],
+        current_pos: Tuple[float, float],
+    ) -> bool:
+        """
+        Handles game state commands from the referee.
+        Returns True if a referee command dictated the robot's action, False otherwise.
+        """
+        if not referee_data:
+            return False
 
-                    # Get ball position to ensure we stay away
-                    if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                        ball_x = vision_data["ball"]["x"]
-                        ball_y = vision_data["ball"]["y"]
-                        current_pos = self._get_current_pos()
-
-                        if current_pos:
-                            # Check if we're too close to ball (within 0.5m)
-                            distance_to_ball = math.sqrt(
-                                (current_pos[0] - ball_x) ** 2
-                                + (current_pos[1] - ball_y) ** 2
-                            )
-
-                            if distance_to_ball < 0.5:
-                                # Move away from ball
-                                away_vector_x = current_pos[0] - ball_x
-                                away_vector_y = current_pos[1] - ball_y
-
-                                # Normalize vector
-                                vector_length = math.sqrt(
-                                    away_vector_x**2 + away_vector_y**2
-                                )
-                                if vector_length > 0:
-                                    away_vector_x /= vector_length
-                                    away_vector_y /= vector_length
-
-                                # Set target position away from ball
-                                self.target_position = (
-                                    current_pos[0] + away_vector_x * 0.6,
-                                    current_pos[1] + away_vector_y * 0.6,
-                                )
-                                if DEBUG_ROBOT_BEHAVIOR:
-                                    print(
-                                        f"Robot {self.robot_id}: Moving away from ball to {self.target_position}"
-                                    )
-
-                    # Update path with new target
-                    if current_pos and self.target_position:
-                        self.game.path_planner.request_path(
-                            self.robot_id, current_pos, self.target_position
-                        )
-
-                    # Follow path to safe position
-                    self._follow_path()
-                    return
-
-                elif game_state in [
-                    "KICK_OFF",
-                    "FREE_KICK",
-                    "PENALTY",
-                    "GOAL_KICK",
-                    "CORNER_KICK",
-                    "BALL_PLACEMENT",
-                ]:
-                    # Check if this command is for our team
-                    is_our_team_turn = team_for_action == self.team_color
-
-                    if is_our_team_turn:
-                        if DEBUG_ROBOT_BEHAVIOR:
-                            print(f"Robot {self.robot_id}: {game_state} for our team")
-                        # Handle based on robot role (will be implemented in subclasses)
-                        # Let normal decision logic run
-                    else:
-                        if DEBUG_ROBOT_BEHAVIOR:
-                            print(
-                                f"Robot {self.robot_id}: {game_state} for opponent team - keeping distance"
-                            )
-                        # We need to keep distance (0.5m) from ball during opponent's turn
-                        self.current_state = RobotState.SUPPORTING
-
-                        # Make sure we're not too close to the ball
-                        if (
-                            "ball" in vision_data
-                            and vision_data["ball"]["x"] is not None
-                        ):
-                            ball_x = vision_data["ball"]["x"]
-                            ball_y = vision_data["ball"]["y"]
-                            current_pos = self._get_current_pos()
-
-                            if current_pos:
-                                # Check if we're too close to ball
-                                distance_to_ball = math.sqrt(
-                                    (current_pos[0] - ball_x) ** 2
-                                    + (current_pos[1] - ball_y) ** 2
-                                )
-
-                                if distance_to_ball < 0.5:
-                                    # Move away from ball
-                                    away_vector_x = current_pos[0] - ball_x
-                                    away_vector_y = current_pos[1] - ball_y
-
-                                    # Normalize vector
-                                    vector_length = math.sqrt(
-                                        away_vector_x**2 + away_vector_y**2
-                                    )
-                                    if vector_length > 0:
-                                        away_vector_x /= vector_length
-                                        away_vector_y /= vector_length
-
-                                    # Set target position away from ball
-                                    self.target_position = (
-                                        current_pos[0] + away_vector_x * 0.6,
-                                        current_pos[1] + away_vector_y * 0.6,
-                                    )
-
-                                    # Update path planning
-                                    self.game.path_planner.request_path(
-                                        self.robot_id, current_pos, self.target_position
-                                    )
-
-                                    # Follow path to safe position
-                                    self._follow_path()
-                                    return
-
-            # If no game state interruption, proceed with normal decision making
-            self._decide_next_action(vision_data)
-            self._execute_current_state(vision_data)
-
-    def _decide_next_action(self, vision_data: Dict):
-        """Robot decision making"""
-        # Replace direct prints:
-        # print(f"Attacker {self.robot_id} decision making...")
-
-        # With conditional prints:
-        if DEBUG_ROBOT_BEHAVIOR:
-            print(f"Attacker {self.robot_id} decision making...")
-
-        if not vision_data or "ball" not in vision_data:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            if DEBUG_ROBOT_BEHAVIOR:
-                print(f"No vision data or ball. Returning home to {self.home_position}")
-            return
-
-        ball = vision_data["ball"]
-        if ball["x"] is None:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            if DEBUG_ROBOT_BEHAVIOR:
-                print(f"Ball not detected. Returning home to {self.home_position}")
-            return
-
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            if DEBUG_ROBOT_BEHAVIOR:
-                print("Robot position not detected. Cannot make decisions.")
-            return
-
-        # Calculate distance to ball
-        distance_to_ball = (
-            (current_pos[0] - ball["x"]) ** 2 + (current_pos[1] - ball["y"]) ** 2
-        ) ** 0.5
+        game_command = referee_data.get("command", "")
+        # In SSL-Game-Controller, team for action is often part of the command string itself (e.g., KICK_OFF_BLUE)
+        # or in a separate `designated_team` or similar field. Adapt as per your GC data structure.
+        # For now, let's assume team_for_action is derived correctly.
+        team_for_action = referee_data.get(
+            "team_color_for_command", self.game.get_team_for_command(game_command)
+        )  # Example helper
 
         if DEBUG_ROBOT_BEHAVIOR:
             print(
-                f"Ball at ({ball['x']:.2f}, {ball['y']:.2f}), distance: {distance_to_ball:.2f}"
+                f"Robot {self.robot_id} ({self.role.value if self.role else 'Unknown'}): "
+                f"Ref CMD: {game_command}, TeamForAction: {team_for_action}, OurTeam: {self.team_color}"
             )
-            print(f"Current position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
 
-    def _execute_current_state(self, vision_data: Dict):
-        """Execute behavior for current state"""
-        if self.current_state == RobotState.MOVING_TO_POSITION:
-            current_pos = self._get_current_pos()
-            if current_pos and self.target_position:
-                # Request path from planner (already queued in _decide_next_action)
-                path = self.game.path_planner.get_path(self.robot_id)
-
-                # If path is available, follow it
-                if path and len(path) > 0:
-                    # Get next waypoint (or use a more sophisticated path follower)
-                    next_point = path[0] if len(path) > 1 else path[0]
-
-                    # Calculate direction vector
-                    dx = next_point[0] - current_pos[0]
-                    dy = next_point[1] - current_pos[1]
-
-                    # Calculate desired orientation
-                    target_orientation = math.atan2(dy, dx)
-
-                    # Get appropriate controller from game
-                    controller = self.game.controllers[self.game.mode][self.team_color]
-
-                    # Send velocity commands
-                    controller.send_global_velocity(
-                        self.robot_id, dx, dy, target_orientation
-                    )
-
-    def _should_replan(self, current_pos) -> bool:
-        """Determine if path needs to be replanned"""
-        import time
-
-        # Check if enough time has passed since last planning
-        current_time = time.time()
-        if current_time - self.path_replan_time < self.replan_threshold:
-            return False
-
-        # Always replan if no path exists
-        if not self.last_path:
+        if game_command == "HALT":
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Robot {self.robot_id}: HALT command - Stopping.")
+            self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
+            self.current_state = RobotState.IDLE
+            self.target_position = None
+            self.current_path = []
             return True
 
-        # Check if we're close to the goal
-        if self.target_position:
-            distance_to_goal = (
-                (current_pos[0] - self.target_position[0]) ** 2
-                + (current_pos[1] - self.target_position[1]) ** 2
-            ) ** 0.5
-            if distance_to_goal < 0.1:  # We're very close to goal
-                return False
+        if game_command == "STOP":
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"Robot {self.robot_id}: STOP command - Keeping {BALL_AVOIDANCE_DISTANCE_STOP}m from ball."
+                )
+            self.current_state = RobotState.AVOIDING_BALL  # Using a dedicated state
+            ball_pos_data = vision_data.get("ball")
+            if ball_pos_data and ball_pos_data.get("x") is not None:
+                ball_coords = (ball_pos_data["x"], ball_pos_data["y"])
+                dist_to_ball = self._distance(current_pos, ball_coords)
+                if dist_to_ball < BALL_AVOIDANCE_DISTANCE_STOP:
+                    # Move away from ball
+                    vec_x = current_pos[0] - ball_coords[0]
+                    vec_y = current_pos[1] - ball_coords[1]
+                    norm = self._distance((0, 0), (vec_x, vec_y))
+                    if norm > 0:
+                        target_dist = (
+                            BALL_AVOIDANCE_DISTANCE_STOP + 0.1
+                        )  # Move slightly further
+                        self.target_position = (
+                            ball_coords[0] + vec_x / norm * target_dist,
+                            ball_coords[1] + vec_y / norm * target_dist,
+                        )
+                    else:  # On top of ball
+                        self.target_position = (
+                            current_pos[0] + target_dist,
+                            current_pos[1],
+                        )
+                else:  # Already far enough, stay or move to home
+                    self.target_position = (
+                        current_pos  # Stay put, or self.home_position
+                    )
+            else:  # No ball, go home
+                self.target_position = self.home_position
+            self._process_movement(current_pos)
+            return True
 
-        # Get vision data to check for obstacles
-        vision_data = self.game.get_vision_data()
-        if not vision_data:
-            return False
-
-        # Check if any robot has moved too close to our path
-        for team in ["robotsBlue", "robotsYellow"]:
-            for robot_id, robot in vision_data.get(team, {}).items():
-                if int(robot_id) == self.robot_id or robot["x"] is None:
-                    continue
-
-                # Calculate distance to our path
-                min_dist = float("inf")
-                for point in self.last_path:
-                    dist = (
-                        (robot["x"] - point[0]) ** 2 + (robot["y"] - point[1]) ** 2
-                    ) ** 0.5
-                    min_dist = min(min_dist, dist)
-
-                # If a robot is too close to our path, we should replan
-                if min_dist < 0.3:  # Adjust threshold as needed
-                    return True
-
-        return False
-
-    def _follow_path(self):
-        """Follow the computed path using the path follower"""
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            return
-
-        # Get current orientation
-        current_orientation = self._get_current_orientation()
-        if current_orientation is None:
-            return
-
-        # Get the latest path from the path planner
-        path = self.game.path_planner.get_path(self.robot_id)
-
-        # Check if we need to replan
-        if self._should_replan(current_pos) and self.target_position:
-            import time
-
-            self.game.path_planner.request_path(
-                self.robot_id, current_pos, self.target_position
-            )
-            self.path_replan_time = time.time()
-
-        # If we have a path, follow it
-        if path and len(path) > 0:
-            self.last_path = path
-            # Get target point from path follower
-            target_point = self.path_follower.get_target_point(
-                current_pos, self.last_path
+        # Handle "PREPARE" states (Kickoff, Penalty)
+        if "PREPARE_KICKOFF" in game_command or "PREPARE_PENALTY" in game_command:
+            # Robots must be in their own half. Specific positioning rules apply.
+            # This is a simplified version. More detailed logic needed for specific PREPARE states.
+            halfway_line_x = 0.0
+            in_own_half = (
+                self.team_color == "blue"
+                and current_pos[0] < halfway_line_x - OWN_HALF_OFFSET
+            ) or (
+                self.team_color == "yellow"
+                and current_pos[0] > halfway_line_x + OWN_HALF_OFFSET
             )
 
-            # Follow the path
-            self._move_to_point(current_pos, current_orientation, target_point)
-        else:
-            # Fallback to direct movement if no path is available
-            if self.target_position:
+            if not in_own_half:
                 if DEBUG_ROBOT_BEHAVIOR:
                     print(
-                        f"No path found for robot {self.robot_id}, using direct movement"
+                        f"Robot {self.robot_id}: {game_command} - Not in own half. Returning."
                     )
-                self._move_to_point(
-                    current_pos, current_orientation, self.target_position
+                self.current_state = RobotState.RETURNING
+                # A generic target in own half. Roles might refine this.
+                target_x = (
+                    -self.game.field_bounds["x_max"] * 0.25
+                    if self.team_color == "blue"
+                    else self.game.field_bounds["x_max"] * 0.25
                 )
+                self.target_position = (target_x, current_pos[1])
+                self._process_movement(current_pos)
+                return True
+            else:
+                # If in own half, role-specific logic for PREPARE states might apply
+                # or simply hold position. For now, we let _decide_next_action handle it.
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"Robot {self.robot_id}: {game_command} - In own half. Role will decide."
+                    )
+                return False  # Let role logic handle specific positioning
 
-    def _enforce_field_boundaries(self, target_position):
-        """Ensure target position is within field boundaries with safety margin"""
-        if not hasattr(self.game, "field_bounds") or not self.game.field_bounds:
-            return target_position  # No boundaries defined, return original target
+        # Set Pieces (Kickoff, Free Kick, Penalty, etc.)
+        # These commands determine which team can act with the ball.
+        relevant_set_piece = False
+        for piece in [
+            "KICK_OFF",
+            "FREE_KICK",
+            "PENALTY",
+            "CORNER_KICK",
+            "GOAL_KICK",
+            "BALL_PLACEMENT",
+            "THROW_IN",
+        ]:
+            if piece in game_command:
+                relevant_set_piece = True
+                break
 
-        # Get field boundaries
-        field_bounds = self.game.field_bounds
+        if relevant_set_piece:
+            is_our_turn = team_for_action == self.team_color
 
-        # Safety margin from field edges (in meters)
-        margin = 0.2
+            if not is_our_turn:
+                # Opponent's turn. We must keep distance from the ball.
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"Robot {self.robot_id}: Opponent's {game_command}. Keeping distance."
+                    )
+                self.current_state = RobotState.AVOIDING_BALL
+                ball_pos_data = vision_data.get("ball")
+                if ball_pos_data and ball_pos_data.get("x") is not None:
+                    ball_coords = (ball_pos_data["x"], ball_pos_data["y"])
+                    dist_to_ball = self._distance(current_pos, ball_coords)
+                    # BALL_PLACEMENT allows robots to be close if placing ball. Otherwise, 0.5m rule.
+                    required_dist = (
+                        0.0
+                        if "BALL_PLACEMENT" in game_command
+                        and team_for_action == self.team_color
+                        else BALL_AVOIDANCE_DISTANCE_OPPONENT_SET_PIECE
+                    )
 
-        # Calculate constrained target position
-        x = max(
-            field_bounds.get("x_min", -2.25) + margin,
-            min(field_bounds.get("x_max", 2.25) - margin, target_position[0]),
-        )
-        y = max(
-            field_bounds.get("y_min", -1.5) + margin,
-            min(field_bounds.get("y_max", 1.5) - margin, target_position[1]),
-        )
+                    if dist_to_ball < required_dist:
+                        vec_x = current_pos[0] - ball_coords[0]
+                        vec_y = current_pos[1] - ball_coords[1]
+                        norm = self._distance((0, 0), (vec_x, vec_y))
+                        if norm > 0:
+                            target_dist = required_dist + 0.1  # Move slightly further
+                            self.target_position = (
+                                ball_coords[0] + vec_x / norm * target_dist,
+                                ball_coords[1] + vec_y / norm * target_dist,
+                            )
+                        else:  # On top of ball
+                            self.target_position = (
+                                current_pos[0] + target_dist,
+                                current_pos[1],
+                            )
+                        self._process_movement(current_pos)
+                    # else: already far enough, could hold position or allow role to decide
+                return True  # Action dictated by referee rule
+            # else (is_our_turn): let role-specific logic in _decide_next_action handle it.
 
-        # If position was changed, log it
-        if (x, y) != target_position and DEBUG_ROBOT_BEHAVIOR:
+        return False  # No overriding referee command handled here
+
+    def _decide_next_action(
+        self,
+        vision_data: Dict,
+        referee_data: Optional[Dict],
+        current_pos: Tuple[float, float],
+    ):
+        """Placeholder: Subclasses MUST implement this to set current_state and target_position, then call _process_movement."""
+        if DEBUG_ROBOT_BEHAVIOR:
             print(
-                f"Boundary enforcement: Robot {self.robot_id} target adjusted from {target_position} to ({x:.2f}, {y:.2f})"
+                f"RobotStateMachine {self.robot_id}: Default _decide_next_action. Role: {self.role.value if self.role else 'N/A'}"
             )
 
+        # Default fallback: if idle or no target, go home
+        if self.current_state == RobotState.IDLE or not self.target_position:
+            self.current_state = RobotState.RETURNING
+            self.target_position = self.home_position
+
+        self._process_movement(current_pos)
+
+    def _process_movement(self, current_pos: Tuple[float, float]):
+        """Centralized handler for path requests and initiating path following."""
+        if self.target_position:
+            self._request_path_if_needed(current_pos, self.target_position)
+            self._follow_path(current_pos)  # Pass current_pos to _follow_path
+        else:  # No target_position
+            if self.current_state != RobotState.IDLE:  # If not intentionally idle, stop
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"Robot {self.robot_id}: No target_position, but not IDLE. Stopping."
+                    )
+                self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
+                self.current_path = []
+
+    def _request_path_if_needed(
+        self, current_pos: Tuple[float, float], target_pos: Tuple[float, float]
+    ):
+        """Requests a path from the planner if conditions are met."""
+        now = time.time()
+
+        # Check if target has changed significantly from the last path's target
+        target_changed = True
+        if self.last_target_for_path:
+            if (
+                self._distance(target_pos, self.last_target_for_path)
+                < PATH_TARGET_CHANGE_THRESHOLD
+            ):
+                target_changed = False
+
+        if target_changed or (now - self.last_path_request_time > PATH_REPLAN_INTERVAL):
+            if DEBUG_ROBOT_BEHAVIOR:
+                reason = "target changed" if target_changed else "replan interval"
+                print(
+                    f"Robot {self.robot_id}: Requesting path from {current_pos} to {target_pos} (Reason: {reason})"
+                )
+            self.game.path_planner.request_path(self.robot_id, current_pos, target_pos)
+            self.last_path_request_time = now
+            self.last_target_for_path = (
+                target_pos  # Store the target for which this path was requested
+            )
+
+    def _follow_path(self, current_pos: Tuple[float, float]):  # Added current_pos
+        """Follows the current path using the path follower."""
+        current_orientation = self._get_current_orientation()
+        if current_orientation is None:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Robot {self.robot_id}: No orientation data for path following.")
+            self.game.active_controller.send_global_velocity(
+                self.robot_id, 0, 0, 0
+            )  # Stop if no orientation
+            return
+
+        # Get latest path from planner
+        # This might be slightly delayed from the request, which is okay for now.
+        # For critical real-time updates, a callback or future from path_planner would be better.
+        path_from_planner = self.game.path_planner.get_path(self.robot_id)
+
+        # Use the new path if available and different from current, or if no current path
+        if path_from_planner and path_from_planner != self.current_path:
+            self.current_path = path_from_planner
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"Robot {self.robot_id}: Updated to new path with {len(self.current_path)} points."
+                )
+
+        if self.current_path and len(self.current_path) > 0:
+            lookahead_point = self.path_follower.get_target_point(
+                current_pos, self.current_path
+            )
+            self._move_to_point(current_pos, current_orientation, lookahead_point)
+            # Check if close to the final point of the *current_path*
+            if (
+                self.current_path
+                and self._distance(current_pos, self.current_path[-1])
+                < FINE_TUNE_DISTANCE
+            ):
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"Robot {self.robot_id}: Reached end of current path segment."
+                    )
+                # If also close to overall target_position, could set state to IDLE or re-evaluate.
+                if (
+                    self.target_position
+                    and self._distance(current_pos, self.target_position)
+                    < FINE_TUNE_DISTANCE
+                ):
+                    self.current_state = (
+                        RobotState.IDLE
+                    )  # Or a specific "ARRIVED" state
+                    # Potentially stop the robot explicitly here if IDLE doesn't guarantee it
+                    self.game.active_controller.send_global_velocity(
+                        self.robot_id, 0, 0, 0
+                    )
+
+        elif self.target_position:  # No path, but have a target: direct move (fallback)
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"Robot {self.robot_id}: No path from planner. Moving directly to {self.target_position}."
+                )
+            self._move_to_point(current_pos, current_orientation, self.target_position)
+        else:  # No path and no target_position
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Robot {self.robot_id}: No path and no target. Idling.")
+            if self.current_state != RobotState.IDLE:  # If not already idle, stop.
+                self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
+
+    def _enforce_field_boundaries(
+        self, target_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        """Ensure target position is within field boundaries with a safety margin."""
+        bounds = (
+            self.game.field_bounds
+        )  # Assumes field_bounds is {x_min, x_max, y_min, y_max}
+
+        x = max(
+            bounds["x_min"] + FIELD_BOUNDARY_MARGIN,
+            min(bounds["x_max"] - FIELD_BOUNDARY_MARGIN, target_pos[0]),
+        )
+        y = max(
+            bounds["y_min"] + FIELD_BOUNDARY_MARGIN,
+            min(bounds["y_max"] - FIELD_BOUNDARY_MARGIN, target_pos[1]),
+        )
+
+        if (x, y) != target_pos and DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"Robot {self.robot_id}: Target {target_pos} adjusted by boundary to ({x:.2f}, {y:.2f})"
+            )
         return (x, y)
 
-    def _move_to_point(self, current_pos, current_orientation, target_point):
-        """Move to a target point with velocity scaling based on curvature"""
-        # Apply boundary enforcement to target point
+    def _move_to_point(
+        self,
+        current_pos: Tuple[float, float],
+        current_orientation: float,
+        target_point: Tuple[float, float],
+    ):
+        """Move robot towards a target_point with orientation and speed control."""
         safe_target = self._enforce_field_boundaries(target_point)
 
-        # Calculate direction vector
         dx = safe_target[0] - current_pos[0]
         dy = safe_target[1] - current_pos[1]
+        distance_to_target = self._distance(
+            (0, 0), (dx, dy)
+        )  # math.sqrt(dx*dx + dy*dy)
 
-        # Calculate desired orientation
-        target_orientation = math.atan2(dy, dx)
+        # --- Speed Control ---
+        speed_factor = 1.0
+        if distance_to_target < FINE_TUNE_DISTANCE:
+            speed_factor = 0.0  # Stop if very close (or very low speed for fine tuning)
+        elif distance_to_target < APPROACH_SLOWDOWN_DISTANCE:
+            # Linear ramp down from 1.0 to 0.1 (or other min_speed_factor)
+            min_speed_factor_on_approach = 0.2
+            speed_factor = min_speed_factor_on_approach + (
+                distance_to_target - FINE_TUNE_DISTANCE
+            ) / (APPROACH_SLOWDOWN_DISTANCE - FINE_TUNE_DISTANCE) * (
+                1.0 - min_speed_factor_on_approach
+            )
+            speed_factor = max(
+                min_speed_factor_on_approach, min(1.0, speed_factor)
+            )  # Clamp
 
-        # Calculate distance to target
-        distance = math.sqrt(dx**2 + dy**2)
-
-        # Scale velocity based on distance (slow down when close)
-        max_speed = 1.0  # Maximum speed in m/s
-        speed_factor = min(1.0, distance / 0.5)  # Slow down within 0.5m
-
-        # Add curvature-based speed scaling
-        # Calculate angle change required
-        angle_diff = abs(
-            self._normalize_angle(target_orientation - current_orientation)
+        # --- Orientation Control ---
+        # Desired orientation: face the direction of movement towards safe_target
+        angle_to_safe_target = math.atan2(dy, dx)
+        orientation_error = self._normalize_angle(
+            angle_to_safe_target - current_orientation
         )
 
-        # Scale speed based on angle change (more turning = slower speed)
-        curvature_factor = max(0.3, 1.0 - angle_diff / math.pi)
+        # Reduce linear speed if a large turn is needed
+        if abs(orientation_error) > TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_HIGH:
+            speed_factor *= TURN_SPEED_REDUCTION_FACTOR_HIGH
+        elif abs(orientation_error) > TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_LOW:
+            speed_factor *= TURN_SPEED_REDUCTION_FACTOR_LOW
 
-        # Apply both scaling factors
-        final_speed_factor = min(speed_factor, curvature_factor)
-
-        # Calculate velocities
-        velocity_x = dx * max_speed * final_speed_factor
-        velocity_y = dy * max_speed * final_speed_factor
-
-        # Safety check: If robot is already at or beyond field boundary, prevent further movement in that direction
-        if hasattr(self.game, "field_bounds"):
-            field_bounds = self.game.field_bounds
-            margin = 0.05  # Smaller margin for immediate reaction
-
-            # Check if robot is near or beyond field boundaries
-            if (
-                current_pos[0] <= field_bounds.get("x_min", -2.25) + margin
-                and velocity_x < 0
-            ):
-                velocity_x = 0  # Don't move further in negative x
-            if (
-                current_pos[0] >= field_bounds.get("x_max", 2.25) - margin
-                and velocity_x > 0
-            ):
-                velocity_x = 0  # Don't move further in positive x
-            if (
-                current_pos[1] <= field_bounds.get("y_min", -1.5) + margin
-                and velocity_y < 0
-            ):
-                velocity_y = 0  # Don't move further in negative y
-            if (
-                current_pos[1] >= field_bounds.get("y_max", 1.5) - margin
-                and velocity_y > 0
-            ):
-                velocity_y = 0  # Don't move further in positive y
-
-        # Calculate angular velocity to align with target orientation
-        angle_diff = self._normalize_angle(target_orientation - current_orientation)
-        angular_velocity = angle_diff * 2.0  # Proportional control
-
-        # Get appropriate controller from game context
-        controller = self.game.active_controller
-
-        # Send velocity commands
-        controller.send_global_velocity(
-            self.robot_id, velocity_x, velocity_y, angular_velocity
+        # P-controller for angular velocity
+        # Gain can be tuned. Higher gain = faster orientation, but can oscillate.
+        angular_p_gain = 2.5
+        angular_velocity = orientation_error * angular_p_gain
+        angular_velocity = max(
+            -ROBOT_MAX_ANGULAR_SPEED, min(ROBOT_MAX_ANGULAR_SPEED, angular_velocity)
         )
 
-    def _normalize_angle(self, angle):
-        """Normalize angle to [-pi, pi]"""
+        # --- Final Velocity Calculation ---
+        # Target linear speed
+        target_linear_speed = ROBOT_MAX_LINEAR_SPEED * speed_factor
+
+        # Calculate vx, vy based on current orientation if we want robot-centric control (local_velocity)
+        # For global_velocity, vx and vy are world-frame velocities towards target
+        if distance_to_target > 0:  # Avoid division by zero
+            vx = (dx / distance_to_target) * target_linear_speed
+            vy = (dy / distance_to_target) * target_linear_speed
+        else:
+            vx, vy = 0, 0  # Already at target
+
+        # --- Boundary Safety Stop (Immediate) ---
+        # If robot is ALREADY outside (or very near edge) and moving further out, stop that component of velocity.
+        bounds = self.game.field_bounds
+        if (
+            current_pos[0] <= bounds["x_min"] + IMMEDIATE_BOUNDARY_STOP_MARGIN
+            and vx < 0
+        ) or (
+            current_pos[0] >= bounds["x_max"] - IMMEDIATE_BOUNDARY_STOP_MARGIN
+            and vx > 0
+        ):
+            vx = 0
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Robot {self.robot_id}: X-boundary safety stop.")
+        if (
+            current_pos[1] <= bounds["y_min"] + IMMEDIATE_BOUNDARY_STOP_MARGIN
+            and vy < 0
+        ) or (
+            current_pos[1] >= bounds["y_max"] - IMMEDIATE_BOUNDARY_STOP_MARGIN
+            and vy > 0
+        ):
+            vy = 0
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"Robot {self.robot_id}: Y-boundary safety stop.")
+
+        if hasattr(self.game, "active_controller") and self.game.active_controller:
+            if DEBUG_ROBOT_BEHAVIOR and (
+                abs(vx) > ROBOT_MAX_LINEAR_SPEED or abs(vy) > ROBOT_MAX_LINEAR_SPEED
+            ):
+                print(
+                    f"Robot {self.robot_id} WARNING: Velocity ({vx:.2f}, {vy:.2f}) exceeds max speed {ROBOT_MAX_LINEAR_SPEED}"
+                )
+
+            self.game.active_controller.send_global_velocity(
+                self.robot_id, vx, vy, angular_velocity
+            )
+            if DEBUG_ROBOT_BEHAVIOR:
+                # This print can be very verbose, enable only when deep debugging movement
+                # print(f"Robot {self.robot_id}: CMD Vel: vx={vx:.2f}, vy={vy:.2f}, w={angular_velocity:.2f} "
+                #       f"| TargetPt: ({target_point[0]:.2f},{target_point[1]:.2f}) Dist: {distance_to_target:.2f} OrientErr: {orientation_error:.2f}")
+                pass
+        elif DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"Robot {self.robot_id}: No active_controller found in game object for _move_to_point!"
+            )
+
+    def _normalize_angle(self, angle: float) -> float:
+        """Normalize angle to the range [-pi, pi]."""
         while angle > math.pi:
             angle -= 2 * math.pi
         while angle < -math.pi:
             angle += 2 * math.pi
         return angle
 
+    def _distance(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        """Helper for Euclidean distance, identical to PathFollower's."""
+        return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+
+    def debug_robot_state(self, vision_data: Dict, referee_data: Optional[Dict]):
+        """Generic debug printer for robot state. To be called by subclasses."""
+        current_pos = self._get_current_pos()
+        current_orient = self._get_current_orientation()
+
+        print(f"\n--- DEBUG: Robot ID {self.robot_id} ({self.team_color}) ---")
+        print(f"Role: {self.role.value if self.role else 'N/A'}")
+        print(f"Current State: {self.current_state.value}")
+        print(
+            f"Position: {('({:.2f}, {:.2f})'.format(current_pos[0], current_pos[1])) if current_pos else 'N/A'}"
+        )
+        print(
+            f"Orientation: {('{:.2f} rad'.format(current_orient)) if current_orient is not None else 'N/A'}"
+        )
+        print(
+            f"Target Position: {('({:.2f}, {:.2f})'.format(self.target_position[0], self.target_position[1])) if self.target_position else 'N/A'}"
+        )
+
+        path_info = "No Path"
+        if self.current_path:
+            path_info = (
+                f"{len(self.current_path)} points. Start: ({self.current_path[0][0]:.2f}, {self.current_path[0][1]:.2f}), "
+                f"End: ({self.current_path[-1][0]:.2f}, {self.current_path[-1][1]:.2f})"
+            )
+        print(f"Current Path: {path_info}")
+
+        ball_data = vision_data.get("ball")
+        if ball_data and ball_data.get("x") is not None:
+            print(f"Ball Position: ({ball_data['x']:.2f}, {ball_data['y']:.2f})")
+            if current_pos:
+                print(
+                    f"Distance to Ball: {self._distance(current_pos, (ball_data['x'], ball_data['y'])):.2f}m"
+                )
+        else:
+            print("Ball: Not detected or no position data.")
+
+        if referee_data:
+            print(
+                f"Referee CMD: {referee_data.get('command', 'N/A')}, "
+                f"TeamForAction: {self.game.get_team_for_command(referee_data.get('command', ''))}, "
+                f"Stage: {referee_data.get('stage', 'N/A')}, "
+                f"CanPlay: {referee_data.get('can_play', False)}"
+            )
+        else:
+            print("Referee Data: N/A")
+        print(f"------------------------------------")
+
 
 class GoalkeeperStateMachine(RobotStateMachine):
-    def __init__(self, robot_id: int, team_color: str, game):
+    def __init__(self, robot_id: int, team_color: str, game: Any):
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.GOALKEEPER
-        # Define default positions based on team color
-        self.home_position = (-2.0, 0.0) if team_color == "blue" else (2.0, 0.0)
-        # Set target position initially to home position
+
+        # Define goal line and home position based on field dimensions and team color
+        # Assuming self.game.field_bounds = {'x_min': -W/2, 'x_max': W/2, 'y_min': -H/2, 'y_max': H/2}
+        # Assuming self.game.vision.get_geometry() returns a dict with "goalWidth"
+        field_width_half = self.game.field_bounds["x_max"]
+        self.goal_line_x = (
+            -field_width_half if self.team_color == "blue" else field_width_half
+        )
+        self.home_position = (
+            self.goal_line_x
+            + (
+                GOALKEEPER_GOAL_LINE_OFFSET
+                if self.team_color == "blue"
+                else -GOALKEEPER_GOAL_LINE_OFFSET
+            ),
+            0.0,
+        )
+
+        vision_geom = self.game.vision.get_geometry()
+        self.goal_half_width = (
+            vision_geom.get("goalWidth", 0.8) / 2.0
+        )  # Default to 0.8m if not found
+
         self.target_position = self.home_position
-
-    def _decide_next_action(self, vision_data: Dict):
-        """Goalkeeper decision making with game state awareness"""
-        # Add debug logging
         if DEBUG_ROBOT_BEHAVIOR:
-            self.debug_robot_state(vision_data)
-
-        # Get referee data to check game state
-        referee_data = self.game.get_referee_data()
-        game_state = None
-        team_for_action = None
-
-        if referee_data:
-            game_state = referee_data.get("command")
-            team_for_action = referee_data.get("team")
-            can_play = referee_data.get("can_play", False)
-
-        # For most game states, goalkeeper stays in goal
-        # But we need special handling for penalty against us
-        if game_state == "PENALTY" and team_for_action != self.team_color:
-            # Opposing team's penalty - goalkeeper must stay on goal line
-            print(f"Goalkeeper {self.robot_id}: Positioning for PENALTY defense")
-            self.current_state = RobotState.BLOCKING
-
-            # Position goalkeeper on goal line
-            goal_line_x = -2.0 if self.team_color == "blue" else 2.0
-
-            # Get ball position to align with
-            if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                ball_y = vision_data["ball"]["y"]
-                # Constrain to goal width
-                goal_width = 0.8  # From SSL-EL rules
-                ball_y = max(-goal_width / 2, min(goal_width / 2, ball_y))
-
-                self.target_position = (goal_line_x, ball_y)
-
-                current_pos = self._get_current_pos()
-                if current_pos:
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-            return
-
-        # For goal kick by our team
-        if game_state == "GOAL_KICK" and team_for_action == self.team_color:
-            # Our goal kick - goalkeeper should position at the ball
-            print(f"Goalkeeper {self.robot_id}: Positioning for GOAL_KICK")
-            self.current_state = RobotState.MOVING_TO_POSITION
-
-            # Get ball position
-            if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                ball_x = vision_data["ball"]["x"]
-                ball_y = vision_data["ball"]["y"]
-
-                # Position slightly behind ball
-                offset_x = -0.2 if self.team_color == "blue" else 0.2
-                self.target_position = (ball_x + offset_x, ball_y)
-
-                current_pos = self._get_current_pos()
-                if current_pos:
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-            return
-
-        # Regular goalkeeper behavior for normal gameplay
-        if not vision_data or "ball" not in vision_data:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            # Force path planning to home position
-            current_pos = self._get_current_pos()
-            if current_pos:
-                self.game.path_planner.request_path(
-                    self.robot_id, current_pos, self.home_position
-                )
-            return
-
-        ball = vision_data["ball"]
-        if ball["x"] is None:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            # Force path planning to home position
-            current_pos = self._get_current_pos()
-            if current_pos:
-                self.game.path_planner.request_path(
-                    self.robot_id, current_pos, self.home_position
-                )
-            return
-
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            return
-
-        # Check if ball is threatening goal
-        if self._is_ball_threatening(ball):
-            self.current_state = RobotState.BLOCKING
-            intercept_pos = self._calculate_intercept_position(ball)
-            if intercept_pos:
-                self.target_position = intercept_pos
-                # Force path planning to intercept position
-                self.game.path_planner.request_path(
-                    self.robot_id, current_pos, intercept_pos
-                )
-                print(f"Goalkeeper {self.robot_id}: Moving to block at {intercept_pos}")
-        else:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-            # Force path planning to home position
-            self.game.path_planner.request_path(
-                self.robot_id, current_pos, self.home_position
-            )
             print(
-                f"Goalkeeper {self.robot_id}: Returning to home at {self.home_position}"
+                f"Goalkeeper {self.robot_id} ({self.team_color}) initialized. Home: {self.home_position}, GoalLineX: {self.goal_line_x}, GoalHalfWidth: {self.goal_half_width}"
             )
 
-        # Force path following
-        self._follow_path()
+    def _decide_next_action(
+        self,
+        vision_data: Dict,
+        referee_data: Optional[Dict],
+        current_pos: Tuple[float, float],
+    ):
+        if DEBUG_ROBOT_BEHAVIOR:
+            self.debug_robot_state(vision_data, referee_data)
 
-    def _is_ball_threatening(self, ball: Dict) -> bool:
-        """Check if ball is threatening our goal"""
+        game_command = referee_data.get("command", "") if referee_data else ""
+        team_for_action = (
+            self.game.get_team_for_command(game_command) if referee_data else ""
+        )
+
+        # --- Referee Overrides for Goalkeeper ---
+        # PENALTY for opponent: GK must stay on goal line (can move along it before kick)
+        if "PENALTY" in game_command and team_for_action != self.team_color:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"GK {self.robot_id}: PENALTY DEFENSE positioning.")
+            self.current_state = RobotState.BLOCKING
+            ball_y = vision_data.get("ball", {}).get("y", 0.0)
+            target_y = max(
+                -self.goal_half_width + 0.05, min(self.goal_half_width - 0.05, ball_y)
+            )  # Stay within posts
+            self.target_position = (self.goal_line_x, target_y)  # Stay ON the line
+            self._process_movement(current_pos)
+            return
+
+        # GOAL_KICK for our team (SSL-EL: GK often takes it)
+        if "GOAL_KICK" in game_command and team_for_action == self.team_color:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"GK {self.robot_id}: Taking GOAL KICK.")
+            self.current_state = RobotState.MOVING_TO_BALL  # Or specific KICKING state
+            ball_pos_data = vision_data.get("ball")
+            if ball_pos_data and ball_pos_data.get("x") is not None:
+                ball_coords = (ball_pos_data["x"], ball_pos_data["y"])
+                # Approach ball to kick towards opponent goal center
+                opp_goal_center_x = (
+                    self.game.field_bounds["x_max"]
+                    if self.team_color == "blue"
+                    else -self.game.field_bounds["x_max"]
+                )
+                self.target_position = self._calculate_ball_approach_for_kick(
+                    ball_coords, (opp_goal_center_x, 0.0)
+                )
+            else:  # No ball, go to default ball placement spot for goal kick (edge of penalty area)
+                penalty_area_depth = (
+                    self.game.vision.get_geometry().get("penaltyAreaDepth", 1.0)
+                    / 1000.0
+                )  # convert mm to m
+                default_kick_x = self.goal_line_x + (
+                    penalty_area_depth
+                    if self.team_color == "blue"
+                    else -penalty_area_depth
+                )
+                self.target_position = (default_kick_x, 0.0)
+
+            self._process_movement(current_pos)
+            return
+
+        # --- Normal Goalkeeping Logic ---
+        ball_data = vision_data.get("ball")
+        if not ball_data or ball_data.get("x") is None:  # No ball visible
+            self.current_state = RobotState.RETURNING
+            self.target_position = self.home_position
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"GK {self.robot_id}: No ball, returning home.")
+        elif self._is_ball_threatening(ball_data, current_pos):
+            self.current_state = RobotState.BLOCKING
+            self.target_position = self._calculate_blocking_position(ball_data)
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"GK {self.robot_id}: Ball threatening. Blocking at {self.target_position}."
+                )
+        else:  # Ball not threatening
+            self.current_state = (
+                RobotState.RETURNING
+            )  # Or a more passive 'WATCHING' state
+            self.target_position = self.home_position
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"GK {self.robot_id}: Ball not threatening, returning home.")
+
+        self._process_movement(current_pos)
+
+    def _is_ball_threatening(
+        self, ball_data: Dict, current_pos: Tuple[float, float]
+    ) -> bool:
+        # Threatening if ball is in defensive third of the field.
+        # More advanced: consider ball velocity vector.
+        ball_x = ball_data["x"]
+        defensive_zone_x_limit = (
+            self.game.field_bounds["x_max"] / 3.0
+        )  # One third of field from goal line
+
         if self.team_color == "blue":
-            # Enhanced threat detection - consider ball position and motion
-            return ball["x"] < -1.0  # Ball in our half
-        return ball["x"] > 1.0  # Ball in our half for yellow team
+            # Threat if ball_x is less than (goal_line_x + defensive_zone_x_limit)
+            return ball_x < (self.goal_line_x + defensive_zone_x_limit)
+        else:  # Yellow team
+            # Threat if ball_x is greater than (goal_line_x - defensive_zone_x_limit)
+            return ball_x > (self.goal_line_x - defensive_zone_x_limit)
 
-    def _calculate_intercept_position(
-        self, ball: Dict
-    ) -> Optional[Tuple[float, float]]:
-        """Calculate best position to intercept ball"""
-        # Enhanced intercept calculation
-        goal_line_x = -2.0 if self.team_color == "blue" else 2.0
-        goal_height = 0.4  # Half the goal height
+    def _calculate_blocking_position(self, ball_data: Dict) -> Tuple[float, float]:
+        # Stay on (or slightly in front of) goal line, aligned with ball's Y, within goal posts.
+        ball_y = ball_data.get("y", 0.0)
 
-        # Constrain y position to stay within goal bounds
-        ball_y = max(-goal_height, min(goal_height, ball["y"]))
+        # Clamp target_y to be within goal posts (with a small margin)
+        y_margin_from_post = 0.05  # meters
+        clamped_y = max(
+            -self.goal_half_width + y_margin_from_post,
+            min(self.goal_half_width - y_margin_from_post, ball_y),
+        )
 
-        # Position goalkeeper on goal line in line with ball
-        return (goal_line_x, ball_y)
+        # Position slightly in front of the goal line
+        block_x = self.goal_line_x + (
+            GOALKEEPER_GOAL_LINE_OFFSET
+            if self.team_color == "blue"
+            else -GOALKEEPER_GOAL_LINE_OFFSET
+        )
+        return (block_x, clamped_y)
 
-    def debug_robot_state(self, vision_data):
-        """Debug function to log robot state and decisions"""
-        current_pos = self._get_current_pos()
-
-        print(f"\n==== {self.role.value} {self.robot_id} DEBUG ====")
-        print(f"Team Color: {self.team_color}")
-
-        if current_pos:
-            print(f"Current Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
-        else:
-            print("Current Position: None - Robot not detected")
-
-        print(f"Current State: {self.current_state.value}")
-
-        if self.target_position:
-            print(
-                f"Target Position: ({self.target_position[0]:.2f}, "
-                f"{self.target_position[1]:.2f})"
+    def _calculate_ball_approach_for_kick(
+        self, ball_pos: Tuple[float, float], kick_target_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        """Calculates a point behind the ball relative to the kick target."""
+        offset_dist = 0.15  # How far behind the ball to position
+        dx = kick_target_pos[0] - ball_pos[0]
+        dy = kick_target_pos[1] - ball_pos[1]
+        norm = self._distance((0, 0), (dx, dy))
+        if norm == 0:  # Kick target is at ball position, rare edge case
+            return (
+                ball_pos[0]
+                - (offset_dist if self.team_color == "blue" else -offset_dist),
+                ball_pos[1],
             )
-        else:
-            print("Target Position: None")
 
-        # Check if a path is being planned/followed
-        path = self.game.path_planner.get_path(self.robot_id)
-        if path:
-            print(f"Path Length: {len(path)} points")
-            if len(path) > 0:
-                print(f"First Path Point: ({path[0][0]:.2f}, {path[0][1]:.2f})")
-            if len(path) > 1:
-                print(f"Last Path Point: ({path[-1][0]:.2f}, {path[-1][1]:.2f})")
-        else:
-            print("Path: None")
-
-        # Check ball data
-        if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-            ball = vision_data["ball"]
-            print(f"Ball Position: ({ball['x']:.2f}, {ball['y']:.2f})")
-        else:
-            print("Ball: Not detected")
-
-        # Check referee state
-        referee_data = self.game.get_referee_data()
-        if referee_data:
-            print(f"Referee Command: {referee_data.get('command', 'None')}")
-            print(f"Can Play: {referee_data.get('can_play', False)}")
-        else:
-            print("No referee data available")
-
-        print("==============================")
+        return (
+            ball_pos[0] - (dx / norm * offset_dist),
+            ball_pos[1] - (dy / norm * offset_dist),
+        )
 
 
 class DefenderStateMachine(RobotStateMachine):
-    def __init__(self, robot_id: int, team_color: str, game):
+    def __init__(self, robot_id: int, team_color: str, game: Any):
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.DEFENDER
-        self.home_position = (-1.0, 0.0) if team_color == "blue" else (1.0, 0.0)
-        # Set target position initially to home position
+        # Home position: in own half, spread out if multiple defenders
+        field_width_half = self.game.field_bounds["x_max"]
+        home_x = (
+            -field_width_half * 0.6
+            if self.team_color == "blue"
+            else field_width_half * 0.6
+        )
+        home_y = 0.75 if self.robot_id % 2 == 0 else -0.75  # Example for two defenders
+        self.home_position = (home_x, home_y)
         self.target_position = self.home_position
+        if DEBUG_ROBOT_BEHAVIOR:
+            print(
+                f"Defender {self.robot_id} ({self.team_color}) initialized. Home: {self.home_position}"
+            )
 
-    def _decide_next_action(self, vision_data: Dict):
-        """Defender decision making with game state awareness"""
-        # Get referee data to check game state
-        referee_data = self.game.get_referee_data()
-        game_state = None
-        team_for_action = None
+    def _decide_next_action(
+        self,
+        vision_data: Dict,
+        referee_data: Optional[Dict],
+        current_pos: Tuple[float, float],
+    ):
+        if DEBUG_ROBOT_BEHAVIOR:
+            self.debug_robot_state(vision_data, referee_data)
 
-        if referee_data:
-            game_state = referee_data.get("command")
-            team_for_action = referee_data.get("team")
-            can_play = referee_data.get("can_play", False)
+        game_command = referee_data.get("command", "") if referee_data else ""
+        team_for_action = (
+            self.game.get_team_for_command(game_command) if referee_data else ""
+        )
 
-        # For defensive plays when our team has the action
-        if game_state and team_for_action == self.team_color:
-            if game_state == "KICK_OFF":
-                # Defender should position in defensive half
-                print(f"Defender {self.robot_id}: Positioning for KICK-OFF")
-                self.current_state = RobotState.MOVING_TO_POSITION
+        # --- Referee Overrides for Defender ---
+        # Example: Our KICK_OFF - position defensively but out of the way of attacker
+        if "KICK_OFF" in game_command and team_for_action == self.team_color:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"DEF {self.robot_id}: Positioning for our KICK-OFF.")
+            self.current_state = RobotState.SUPPORTING  # Or a specific formation state
+            # Position in own half, slightly wide. Exact position depends on formation.
+            target_x = (
+                -self.game.field_bounds["x_max"] * 0.25
+                if self.team_color == "blue"
+                else self.game.field_bounds["x_max"] * 0.25
+            )
+            target_y = 0.8 if self.robot_id % 2 == 0 else -0.8  # Spread out
+            self.target_position = (target_x, target_y)
+            self._process_movement(current_pos)
+            return
 
-                # Position defender in defensive half
-                x_pos = -1.0 if self.team_color == "blue" else 1.0
-                self.target_position = (x_pos, 0.5)  # Offset from center
-
-                current_pos = self._get_current_pos()
-                if current_pos:
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-                return
-
-            elif game_state == "FREE_KICK":
-                # Defender should position to support attack
-                print(f"Defender {self.robot_id}: Supporting FREE-KICK")
-                self.current_state = RobotState.SUPPORTING
-
-                # Get ball position
-                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                    ball_x = vision_data["ball"]["x"]
-                    ball_y = vision_data["ball"]["y"]
-
-                    # Position behind ball for support
-                    offset_x = -0.5 if self.team_color == "blue" else 0.5
-                    self.target_position = (ball_x + offset_x, ball_y)
-
-                    current_pos = self._get_current_pos()
-                    if current_pos:
-                        self.game.path_planner.request_path(
-                            self.robot_id, current_pos, self.target_position
-                        )
-                        self._follow_path()
-                return
-
-            elif game_state == "PENALTY":
-                # Defender should clear the way for penalty taker
-                print(f"Defender {self.robot_id}: Clearing for PENALTY")
-                self.current_state = RobotState.SUPPORTING
-
-                # Position away from penalty area
-                x_pos = -1.0 if self.team_color == "blue" else 1.0
-                self.target_position = (x_pos, -1.0)  # Away from the action
-
-                current_pos = self._get_current_pos()
-                if current_pos:
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-                return
-
-            elif game_state in ["CORNER_KICK", "GOAL_KICK"]:
-                # Defender should position for these kicks
-                print(f"Defender {self.robot_id}: Positioning for {game_state}")
-                self.current_state = RobotState.SUPPORTING
-
-                if game_state == "CORNER_KICK":
-                    # For corner kick, position in the box
-                    x_pos = 1.5 if self.team_color == "blue" else -1.5
-                    self.target_position = (x_pos, 0)  # In front of goal
-                else:  # GOAL_KICK
-                    # For goal kick, position to receive from goalkeeper
-                    x_pos = -1.5 if self.team_color == "blue" else 1.5
-                    self.target_position = (x_pos, 0.5)
-
-                current_pos = self._get_current_pos()
-                if current_pos:
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-                return
-
-        # For opposing team's actions, position defensively
-        elif game_state and team_for_action != self.team_color:
-            if game_state in ["KICK_OFF", "FREE_KICK", "CORNER_KICK"]:
-                # Defender should take defensive position
-                print(
-                    f"Defender {self.robot_id}: Defensive position for opponent {game_state}"
+        # Example: Opponent FREE_KICK - form a wall or mark players
+        if "FREE_KICK" in game_command and team_for_action != self.team_color:
+            # This needs more complex logic: where is the free kick? Should we form a wall?
+            # For now, a generic defensive posture.
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"DEF {self.robot_id}: Opponent FREE_KICK. Defensive posture.")
+            self.current_state = RobotState.DEFENDING
+            ball_pos_data = vision_data.get("ball")
+            if ball_pos_data and ball_pos_data.get("x") is not None:
+                self.target_position = self._calculate_defensive_line_position(
+                    ball_pos_data, current_pos
                 )
-                self.current_state = RobotState.DEFENDING
-
-                # Position defensively between ball and our goal
-                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                    ball_x = vision_data["ball"]["x"]
-                    ball_y = vision_data["ball"]["y"]
-
-                    # Our goal position
-                    goal_x = -2.0 if self.team_color == "blue" else 2.0
-                    goal_y = 0.0
-
-                    # Position between ball and goal
-                    self.target_position = (
-                        (ball_x + goal_x) / 2,
-                        (ball_y + goal_y) / 2,
-                    )
-
-                    current_pos = self._get_current_pos()
-                    if current_pos:
-                        self.game.path_planner.request_path(
-                            self.robot_id, current_pos, self.target_position
-                        )
-                        self._follow_path()
-                return
-
-        # Regular defender behavior for normal gameplay
-        if not vision_data or "ball" not in vision_data:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
+            else:
+                self.target_position = self.home_position  # Fallback
+            self._process_movement(current_pos)
             return
 
-        ball = vision_data["ball"]
-        if ball["x"] is None:
+        # --- Normal Defender Logic ---
+        ball_data = vision_data.get("ball")
+        if not ball_data or ball_data.get("x") is None:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
-            return
-
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            return
-
-        # Enhanced defense behavior
-        if self._should_defend(ball):
-            self.current_state = RobotState.MARKING
-            defend_pos = self._calculate_defense_position(ball)
-            self.target_position = defend_pos
-
-            # Force path planning to defense position
-            self.game.path_planner.request_path(self.robot_id, current_pos, defend_pos)
-            print(f"Defender {self.robot_id}: Moving to defend at {defend_pos}")
-        else:
-            self.current_state = RobotState.RETURNING
-            self.target_position = self.home_position
-
-            # Force path planning to home position
-            self.game.path_planner.request_path(
-                self.robot_id, current_pos, self.home_position
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"DEF {self.robot_id}: No ball, returning home.")
+        elif self._is_ball_in_defensive_zone(ball_data):
+            self.current_state = RobotState.DEFENDING  # Or INTERCEPTING if very close
+            self.target_position = self._calculate_intercept_or_block_position(
+                ball_data, vision_data, current_pos
             )
-            print(
-                f"Defender {self.robot_id}: Returning to home at {self.home_position}"
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"DEF {self.robot_id}: Ball in def zone. Target: {self.target_position}."
+                )
+        else:  # Ball is further upfield
+            self.current_state = RobotState.SUPPORTING
+            self.target_position = self._calculate_midfield_support_position(
+                ball_data, current_pos
             )
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(
+                    f"DEF {self.robot_id}: Ball not in def zone. Supporting at {self.target_position}."
+                )
 
-        # Follow the path
-        self._follow_path()
+        self._process_movement(current_pos)
 
-    def _should_defend(self, ball: Dict) -> bool:
-        """Decide if defender should move to defend"""
+    def _is_ball_in_defensive_zone(self, ball_data: Dict) -> bool:
+        # Defensive zone: roughly own half of the field.
+        ball_x = ball_data["x"]
+        midfield_x = 0.0
         if self.team_color == "blue":
-            return ball["x"] < 0  # Ball in our half
-        return ball["x"] > 0  # Ball in our half for yellow team
+            return (
+                ball_x < midfield_x + self.game.field_bounds["x_max"] * 0.1
+            )  # Ball slightly into opponent half is still concern
+        else:  # Yellow team
+            return ball_x > midfield_x - self.game.field_bounds["x_max"] * 0.1
 
-    def _calculate_defense_position(self, ball: Dict) -> Tuple[float, float]:
-        """Calculate best defensive position"""
-        # Enhanced defensive positioning - position between ball and goal
-        goal_x = -2.0 if self.team_color == "blue" else 2.0
+    def _calculate_intercept_or_block_position(
+        self, ball_data: Dict, vision_data: Dict, current_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        # Basic: position on a line between the ball and the center of our goal.
+        # Don't get too close to own goal; let GK handle that.
+        ball_coords = (ball_data["x"], ball_data["y"])
+        our_goal_center_x = (
+            -self.game.field_bounds["x_max"]
+            if self.team_color == "blue"
+            else self.game.field_bounds["x_max"]
+        )
 
-        # Calculate position between ball and goal
-        defense_x = (ball["x"] + goal_x) / 2
+        # Target a point partway between ball and goal
+        interception_ratio = 0.6  # Closer to ball than goal
+        target_x = (
+            ball_coords[0] * (1 - interception_ratio)
+            + our_goal_center_x * interception_ratio
+        )
+        target_y = (
+            ball_coords[1] * (1 - interception_ratio) + 0.0 * interception_ratio
+        )  # Towards Y=0 of goal
 
-        # Ensure defender stays in our half
+        # Keep defender in own half and a certain distance from goal line
+        min_dist_from_own_goal = 0.75  # meters
         if self.team_color == "blue":
-            defense_x = min(
-                -0.5, defense_x
-            )  # Don't go beyond midfield and not too close to goal
+            target_x = min(target_x, -OWN_HALF_OFFSET)  # Stay in own half
+            target_x = max(
+                target_x, our_goal_center_x + min_dist_from_own_goal
+            )  # Don't crowd GK
         else:
-            defense_x = max(
-                0.5, defense_x
-            )  # Don't go beyond midfield and not too close to goal
+            target_x = max(target_x, OWN_HALF_OFFSET)
+            target_x = min(target_x, our_goal_center_x - min_dist_from_own_goal)
 
-        return (defense_x, ball["y"])
+        return (target_x, target_y)
 
-    def debug_robot_state(self, vision_data):
-        """Debug function to log robot state and decisions"""
-        current_pos = self._get_current_pos()
+    def _calculate_midfield_support_position(
+        self, ball_data: Dict, current_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        # Position in midfield, ready to receive a pass or press.
+        # Example: stay slightly behind the ball's x-coordinate, offset in y.
+        ball_x, ball_y = ball_data["x"], ball_data["y"]
 
-        print(f"\n==== {self.role.value} {self.robot_id} DEBUG ====")
-        print(f"Team Color: {self.team_color}")
+        x_offset_behind_ball = 0.5  # meters
+        target_x = ball_x - (
+            x_offset_behind_ball if self.team_color == "blue" else -x_offset_behind_ball
+        )
 
-        if current_pos:
-            print(f"Current Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
+        # Clamp to own half mostly
+        if self.team_color == "blue":
+            target_x = min(
+                target_x, self.game.field_bounds["x_max"] * 0.2
+            )  # Can cross midfield a bit
         else:
-            print("Current Position: None - Robot not detected")
+            target_x = max(target_x, -self.game.field_bounds["x_max"] * 0.2)
 
-        print(f"Current State: {self.current_state.value}")
+        # Y position: if multiple defenders, they can take different y_offsets.
+        y_offset_from_ball = 1.0 if self.robot_id % 2 == 0 else -1.0
+        target_y = ball_y + y_offset_from_ball
+        # Clamp Y to field
+        target_y = max(
+            self.game.field_bounds["y_min"] + FIELD_BOUNDARY_MARGIN,
+            min(self.game.field_bounds["y_max"] - FIELD_BOUNDARY_MARGIN, target_y),
+        )
 
-        if self.target_position:
-            print(
-                f"Target Position: ({self.target_position[0]:.2f}, {self.target_position[1]:.2f})"
+        return (target_x, target_y)
+
+    def _calculate_defensive_line_position(
+        self, ball_data: Dict, current_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        # Simplified: form a line parallel to goal line, at ball's X or slightly deeper.
+        # This is very basic for wall formation.
+        ball_x = ball_data["x"]
+        our_goal_line_x = (
+            -self.game.field_bounds["x_max"]
+            if self.team_color == "blue"
+            else self.game.field_bounds["x_max"]
+        )
+
+        # Position wall slightly in front of penalty area or based on ball_x
+        wall_x_offset = 1.2  # meters from goal line (approx penalty area)
+        wall_x = our_goal_line_x + (
+            wall_x_offset if self.team_color == "blue" else -wall_x_offset
+        )
+
+        # If ball is further out, wall can be further out too, but not beyond ball_x
+        if self.team_color == "blue":
+            wall_x = min(wall_x, ball_x - 0.5)  # Wall 0.5m behind ball
+            wall_x = max(wall_x, our_goal_line_x + 0.5)  # Min dist from goal
+        else:
+            wall_x = max(wall_x, ball_x + 0.5)
+            wall_x = min(wall_x, our_goal_line_x - 0.5)
+
+        # Y position based on robot ID to spread out in a line (very simplified)
+        num_defenders_in_wall = 2  # Assume 2 defenders might form a wall
+        y_spacing = 0.3  # meters
+        base_y = ball_data.get("y", 0.0)  # Center wall around ball's Y
+
+        # This needs robot ID coordination if multiple defenders form a wall.
+        # For a single defender, it might try to block the direct shot path.
+        target_y = (
+            base_y
+            + (
+                self.robot_id % num_defenders_in_wall
+                - (num_defenders_in_wall - 1) / 2.0
             )
-        else:
-            print("Target Position: None")
+            * y_spacing
+        )
 
-        # Check if a path is being planned/followed
-        path = self.game.path_planner.get_path(self.robot_id)
-        if path:
-            print(f"Path Length: {len(path)} points")
-            if len(path) > 0:
-                print(f"First Path Point: ({path[0][0]:.2f}, {path[0][1]:.2f})")
-            if len(path) > 1:
-                print(f"Last Path Point: ({path[-1][0]:.2f}, {path[-1][1]:.2f})")
-        else:
-            print("Path: None")
+        goal_half_width = self.game.vision.get_geometry().get("goalWidth", 0.8) / 2.0
+        target_y = max(
+            -goal_half_width, min(goal_half_width, target_y)
+        )  # Stay within goal width projection
 
-        # Check ball data
-        if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-            ball = vision_data["ball"]
-            print(f"Ball Position: ({ball['x']:.2f}, {ball['y']:.2f})")
-        else:
-            print("Ball: Not detected")
-
-        # Check referee state
-        referee_data = self.game.get_referee_data()
-        if referee_data:
-            print(f"Referee Command: {referee_data.get('command', 'None')}")
-            print(f"Can Play: {referee_data.get('can_play', False)}")
-        else:
-            print("No referee data available")
-
-        print("==============================")
+        return (wall_x, target_y)
 
 
 class AttackerStateMachine(RobotStateMachine):
-    def __init__(self, robot_id: int, team_color: str, game):
+    def __init__(self, robot_id: int, team_color: str, game: Any):
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.ATTACKER
-        # Define home position based on team color
-        self.home_position = (0.5, 0.0) if team_color == "blue" else (-0.5, 0.0)
-        # Set target position initially to home position
+        # Home: slightly in opponent's half, or near center circle.
+        field_width_half = self.game.field_bounds["x_max"]
+        home_x = (
+            field_width_half * 0.1
+            if self.team_color == "blue"
+            else -field_width_half * 0.1
+        )
+        self.home_position = (
+            home_x,
+            0.0,
+        )  # Y can be offset based on ID if multiple attackers
         self.target_position = self.home_position
-        # Threshold for considering ball close enough to own
-        self.ball_ownership_threshold = 0.2
-        # For debug logging
+        self.has_ball = False
         if DEBUG_ROBOT_BEHAVIOR:
-            print(f"Initialized Attacker (ID: {robot_id}, Team: {team_color})")
-
-    def _decide_next_action(self, vision_data: Dict):
-        """Attacker decision making with game state awareness"""
-        # Get referee data to check game state
-        referee_data = self.game.get_referee_data()
-        game_state = None
-        team_for_action = None
-
-        if referee_data:
-            game_state = referee_data.get("command")
-            team_for_action = referee_data.get("team")
-            can_play = referee_data.get("can_play", False)
-
-        # Special handling for offensive actions that our team executes
-        if game_state and team_for_action == self.team_color:
-            if game_state == "KICK_OFF":
-                # Attacker should position for kickoff
-                print(f"Attacker {self.robot_id}: Positioning for KICK-OFF")
-                self.current_state = RobotState.MOVING_TO_POSITION
-
-                # Position attacker near center circle to take kickoff
-                self.target_position = (0, 0)
-
-                current_pos = self._get_current_pos()
-                if current_pos:
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-                return
-
-            elif game_state == "FREE_KICK":
-                # Attacker should take free kick if ball is in forward half
-                print(f"Attacker {self.robot_id}: Positioning for FREE-KICK")
-                self.current_state = RobotState.MOVING_TO_BALL
-
-                # Set target to ball position
-                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                    ball_x = vision_data["ball"]["x"]
-                    ball_y = vision_data["ball"]["y"]
-
-                    # Position attacker near ball to take free kick
-                    # Position slightly behind ball in direction of goal
-                    goal_x = 2.0 if self.team_color == "blue" else -2.0
-                    goal_y = 0.0
-
-                    # Vector from ball to goal
-                    dx = goal_x - ball_x
-                    dy = goal_y - ball_y
-
-                    # Normalize vector
-                    dist = (dx**2 + dy**2) ** 0.5
-                    if dist > 0:
-                        dx /= dist
-                        dy /= dist
-
-                    # Position behind ball on path to goal
-                    self.target_position = (ball_x - dx * 0.2, ball_y - dy * 0.2)
-
-                    current_pos = self._get_current_pos()
-                    if current_pos:
-                        self.game.path_planner.request_path(
-                            self.robot_id, current_pos, self.target_position
-                        )
-                        self._follow_path()
-                return
-
-            elif game_state == "PENALTY":
-                # Attacker should take penalty if assigned
-                print(f"Attacker {self.robot_id}: Positioning for PENALTY")
-                self.current_state = RobotState.MOVING_TO_POSITION
-
-                # Get penalty mark position
-                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                    ball_x = vision_data["ball"]["x"]
-                    ball_y = vision_data["ball"]["y"]
-
-                    # Position attacker behind penalty mark
-                    # The ball should be on the penalty mark
-                    goal_x = 2.0 if self.team_color == "blue" else -2.0
-
-                    # Position slightly behind ball
-                    offset_x = -0.2 if self.team_color == "blue" else 0.2
-                    self.target_position = (ball_x + offset_x, ball_y)
-
-                    current_pos = self._get_current_pos()
-                    if current_pos:
-                        self.game.path_planner.request_path(
-                            self.robot_id, current_pos, self.target_position
-                        )
-                        self._follow_path()
-                return
-
-            elif game_state in ["CORNER_KICK", "GOAL_KICK"]:
-                # Attacker should position strategically for these kicks
-                print(f"Attacker {self.robot_id}: Positioning for {game_state}")
-                self.current_state = RobotState.MOVING_TO_POSITION
-
-                # Get ball position
-                if "ball" in vision_data and vision_data["ball"]["x"] is not None:
-                    ball_x = vision_data["ball"]["x"]
-                    ball_y = vision_data["ball"]["y"]
-
-                    # For corner kick, position near ball
-                    if game_state == "CORNER_KICK":
-                        # Position slightly offset from ball
-                        offset_x = -0.2 if ball_x > 0 else 0.2
-                        offset_y = -0.2 if ball_y > 0 else 0.2
-                        self.target_position = (ball_x + offset_x, ball_y + offset_y)
-                    else:  # GOAL_KICK
-                        # Position in forward position to receive the kick
-                        self.target_position = (0, 0)  # Center field
-
-                    current_pos = self._get_current_pos()
-                    if current_pos:
-                        self.game.path_planner.request_path(
-                            self.robot_id, current_pos, self.target_position
-                        )
-                        self._follow_path()
-                return
-
-        # Check if game has started based on referee data
-        if referee_data:
-            pre_start_commands = [
-                "HALT",
-                "STOP",
-                "PREPARE_KICKOFF_BLUE",
-                "PREPARE_KICKOFF_YELLOW",
-            ]
-            command = referee_data.get("command", "")
-
-            # Consider the game started if:
-            # 1. Command is not a pre-start command AND
-            # 2. Either can_play is True OR command is a specific start command
-            game_started = command not in pre_start_commands and (
-                referee_data.get("can_play", False)
-                or command == "NORMAL_START"
-                or command == "FORCE_START"
+            print(
+                f"Attacker {self.robot_id} ({self.team_color}) initialized. Home: {self.home_position}"
             )
-        else:
-            game_started = True  # Default to game started if no referee data
 
-        # Enforce halfway line restriction before game starts
-        if not game_started:
-            # Determine our half based on team color
-            halfway_line = 0
-            if self.team_color == "blue":
-                # Blue team stays in negative x half (left side)
-                current_pos = self._get_current_pos()
-                if current_pos and current_pos[0] > halfway_line:
-                    # In wrong half, return to our half
-                    print(
-                        f"ENFORCING HALFWAY LINE: Attacker {self.robot_id} returning to correct half"
-                    )
-                    self.current_state = RobotState.RETURNING
-                    self.target_position = (-0.5, current_pos[1])
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-                    return
-            else:
-                # Yellow team stays in positive x half (right side)
-                current_pos = self._get_current_pos()
-                if current_pos and current_pos[0] < halfway_line:
-                    # In wrong half, return to our half
-                    print(
-                        f"ENFORCING HALFWAY LINE: Attacker {self.robot_id} returning to correct half"
-                    )
-                    self.current_state = RobotState.RETURNING
-                    self.target_position = (0.5, current_pos[1])
-                    self.game.path_planner.request_path(
-                        self.robot_id, current_pos, self.target_position
-                    )
-                    self._follow_path()
-                    return
+    def _decide_next_action(
+        self,
+        vision_data: Dict,
+        referee_data: Optional[Dict],
+        current_pos: Tuple[float, float],
+    ):
+        if DEBUG_ROBOT_BEHAVIOR:
+            self.debug_robot_state(vision_data, referee_data)
 
-        # Regular attacker behavior for normal gameplay
-        if "ball" not in vision_data or vision_data["ball"]["x"] is None:
+        game_command = referee_data.get("command", "") if referee_data else ""
+        team_for_action = (
+            self.game.get_team_for_command(game_command) if referee_data else ""
+        )
+        can_play_from_ref = (
+            referee_data.get("can_play", True) if referee_data else True
+        )  # Default to can_play
+
+        # --- Referee Overrides for Attacker ---
+        # KICK_OFF for our team: Attacker usually takes it
+        if "KICK_OFF" in game_command and team_for_action == self.team_color:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"ATT {self.robot_id}: Preparing for KICK-OFF.")
+            self.current_state = RobotState.MOVING_TO_BALL
+            ball_pos_data = vision_data.get("ball")
+            if ball_pos_data and ball_pos_data.get("x") is not None:
+                ball_coords = (ball_pos_data["x"], ball_pos_data["y"])
+                # Approach ball from own side for kickoff (ball is at (0,0))
+                self.target_position = (
+                    ball_coords[0] - (0.15 if self.team_color == "blue" else -0.15),
+                    ball_coords[1],
+                )
+            else:  # Ball not visible, go to center
+                self.target_position = (0.0, 0.0)
+            self._process_movement(current_pos)
+            return
+
+        # FREE_KICK / PENALTY for our team: Attacker might take it
+        if (
+            ("FREE_KICK" in game_command or "PENALTY" in game_command)
+        ) and team_for_action == self.team_color:
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"ATT {self.robot_id}: Preparing for {game_command}.")
+            self.current_state = RobotState.MOVING_TO_BALL
+            ball_pos_data = vision_data.get("ball")
+            if ball_pos_data and ball_pos_data.get("x") is not None:
+                ball_coords = (ball_pos_data["x"], ball_pos_data["y"])
+                opp_goal_center_x = (
+                    self.game.field_bounds["x_max"]
+                    if self.team_color == "blue"
+                    else -self.game.field_bounds["x_max"]
+                )
+                self.target_position = self._calculate_ball_approach_for_kick(
+                    ball_coords, (opp_goal_center_x, 0.0)
+                )
+            else:  # No ball data, difficult to position. Go to a generic offensive spot or home.
+                self.target_position = self.home_position
+            self._process_movement(current_pos)
+            return
+
+        # HALFWAY LINE ENFORCEMENT for PREPARE states or if game not truly started
+        # Game starts on NORMAL_START, FORCE_START, or when a KICK_OFF/FREE_KICK etc. is active for our team
+        game_is_live = (
+            can_play_from_ref
+            and game_command not in ["HALT", "STOP"]
+            and "PREPARE" not in game_command
+        )
+
+        if not game_is_live:
+            halfway_line_x = 0.0
+            # Must be in own half if game not live (simplified rule)
+            if (
+                self.team_color == "blue"
+                and current_pos[0] > halfway_line_x - OWN_HALF_OFFSET
+            ) or (
+                self.team_color == "yellow"
+                and current_pos[0] < halfway_line_x + OWN_HALF_OFFSET
+            ):
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"ATT {self.robot_id}: Game not live ({game_command}). Enforcing halfway line."
+                    )
+                self.current_state = RobotState.RETURNING
+                target_x = (
+                    -self.game.field_bounds["x_max"] * 0.1
+                    if self.team_color == "blue"
+                    else self.game.field_bounds["x_max"] * 0.1
+                )
+                self.target_position = (target_x, current_pos[1])  # Stay on current Y
+                self._process_movement(current_pos)
+                return
+
+        # --- Normal Attacker Logic ---
+        ball_data = vision_data.get("ball")
+        if not ball_data or ball_data.get("x") is None:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
-            return
-
-        ball = vision_data["ball"]
-        current_pos = self._get_current_pos()
-        if not current_pos:
-            return
-
-        # Calculate distance to ball
-        distance_to_ball = (
-            (current_pos[0] - ball["x"]) ** 2 + (current_pos[1] - ball["y"]) ** 2
-        ) ** 0.5
-
-        if distance_to_ball < self.ball_ownership_threshold:
-            # We have the ball - try to score
-            self.current_state = RobotState.ATTACKING
-            attack_pos = self._calculate_attack_position(ball)
-            self.target_position = attack_pos
-
-            self.game.path_planner.request_path(
-                self.robot_id, current_pos, self.target_position
-            )
-        elif self._should_go_to_ball(ball):
-            # Go to ball
-            self.current_state = RobotState.MOVING_TO_BALL
-            self.target_position = (ball["x"], ball["y"])
-
-            self.game.path_planner.request_path(
-                self.robot_id, current_pos, self.target_position
-            )
+            self.has_ball = False
+            if DEBUG_ROBOT_BEHAVIOR:
+                print(f"ATT {self.robot_id}: No ball, returning home.")
         else:
-            # Take supporting position
-            support_pos = self._calculate_support_position(ball)
-            self.current_state = RobotState.SUPPORTING
-            self.target_position = support_pos
+            ball_coords = (ball_data["x"], ball_data["y"])
+            distance_to_ball = self._distance(current_pos, ball_coords)
 
-            self.game.path_planner.request_path(self.robot_id, current_pos, support_pos)
+            if distance_to_ball < ATTACKER_BALL_OWNERSHIP_THRESHOLD:
+                self.has_ball = True
+                self.current_state = (
+                    RobotState.ATTACKING
+                )  # Could be DRIBBLING then SHOOTING
+                # Aim for opponent's goal center
+                opp_goal_x = (
+                    self.game.field_bounds["x_max"]
+                    if self.team_color == "blue"
+                    else -self.game.field_bounds["x_max"]
+                )
+                self.target_position = (opp_goal_x, 0.0)  # Dribble towards goal
+                if DEBUG_ROBOT_BEHAVIOR:
+                    print(
+                        f"ATT {self.robot_id}: Has ball! Attacking towards {self.target_position}."
+                    )
+            else:  # Don't have ball
+                self.has_ball = False
+                if self._is_best_attacker_to_get_ball(
+                    current_pos, ball_coords, vision_data
+                ):
+                    self.current_state = RobotState.MOVING_TO_BALL
+                    self.target_position = self._calculate_ball_approach_for_kick(
+                        ball_coords, self._get_opponent_goal_center()
+                    )
+                    if DEBUG_ROBOT_BEHAVIOR:
+                        print(
+                            f"ATT {self.robot_id}: Best attacker. Moving to ball at {self.target_position}."
+                        )
+                else:
+                    self.current_state = RobotState.SUPPORTING
+                    self.target_position = self._calculate_offensive_support_position(
+                        ball_coords, vision_data, current_pos
+                    )
+                    if DEBUG_ROBOT_BEHAVIOR:
+                        print(
+                            f"ATT {self.robot_id}: Not best attacker. Supporting at {self.target_position}."
+                        )
 
-        # Follow the path after deciding on target
-        self._follow_path()
+        self._process_movement(current_pos)
 
-    def _should_go_to_ball(self, ball: Dict) -> bool:
-        """Decide if attacker should go to ball"""
-        # In our half, always go to ball
-        if (self.team_color == "blue" and ball["x"] > 0) or (
-            self.team_color == "yellow" and ball["x"] < 0
-        ):
-            return True
+    def _get_opponent_goal_center(self) -> Tuple[float, float]:
+        """Returns the coordinates of the center of the opponent's goal."""
+        opp_goal_x = (
+            self.game.field_bounds["x_max"]
+            if self.team_color == "blue"
+            else -self.game.field_bounds["x_max"]
+        )
+        return (opp_goal_x, 0.0)
 
-        # Check if we're the closest robot on our team to the ball
-        vision_data = self.game.get_vision_data()
-        current_pos = self._get_current_pos()
-        if not vision_data or not current_pos:
-            return False
+    def _is_best_attacker_to_get_ball(
+        self,
+        my_pos: Tuple[float, float],
+        ball_pos: Tuple[float, float],
+        vision_data: Dict,
+    ) -> bool:
+        # Simple: closest attacker. More advanced: consider orientation, obstacles.
+        my_dist_to_ball = self._distance(my_pos, ball_pos)
 
         team_key = "robotsBlue" if self.team_color == "blue" else "robotsYellow"
+        robots_on_my_team = vision_data.get(team_key, {})
 
-        # Calculate our distance to ball
-        our_distance = (
-            (current_pos[0] - ball["x"]) ** 2 + (current_pos[1] - ball["y"]) ** 2
-        ) ** 0.5
-
-        # Check if any teammates are closer
-        for robot_id, robot in vision_data.get(team_key, {}).items():
-            if int(robot_id) == self.robot_id or robot["x"] is None:
+        for r_id_str, robot_data in robots_on_my_team.items():
+            r_id = int(r_id_str)
+            if r_id == self.robot_id or robot_data.get("x") is None:
                 continue
 
-            teammate_distance = (
-                (robot["x"] - ball["x"]) ** 2 + (robot["y"] - ball["y"]) ** 2
-            ) ** 0.5
+            # Check if this teammate is an attacker (needs role info if game object stores it)
+            # For now, assume all teammates are potential ball-getters
+            teammate_pos = (robot_data["x"], robot_data["y"])
+            teammate_dist_to_ball = self._distance(teammate_pos, ball_pos)
 
-            if teammate_distance < our_distance:
-                return False  # Someone else is closer
+            # If another attacker is significantly closer (e.g., by more than robot radius)
+            if teammate_dist_to_ball < my_dist_to_ball - 0.1:
+                # This check needs to know roles of other robots from self.game.robot_state_machines
+                # Assuming other_robot_role = self.game.robot_state_machines[r_id].role
+                # if other_robot_role == RobotRole.ATTACKER:
+                #    return False
+                pass  # For now, any teammate closer is enough to not be 'best'
 
-        return True  # We're the closest
+        return True  # Default to true if no one else is clearly closer or if logic is simple
 
-    def _calculate_attack_position(self, ball: Dict) -> Tuple[float, float]:
-        """Calculate position for attacking with ball"""
-        # Simple version - head toward opponent goal
-        goal_x = 2.0 if self.team_color == "blue" else -2.0
-        goal_y = 0.0
+    def _calculate_offensive_support_position(
+        self,
+        ball_pos: Tuple[float, float],
+        vision_data: Dict,
+        current_pos: Tuple[float, float],
+    ) -> Tuple[float, float]:
+        # Find an open space in the attacking third, or make a run.
+        # Simple: Position ahead of the ball towards opponent goal, offset to a side.
+        opp_goal_x, opp_goal_y = self._get_opponent_goal_center()
 
         # Vector from ball to goal
-        dx = goal_x - ball["x"]
-        dy = goal_y - ball["y"]
+        dir_to_goal_x = opp_goal_x - ball_pos[0]
+        dir_to_goal_y = opp_goal_y - ball_pos[1]
+        norm_dir = self._distance((0, 0), (dir_to_goal_x, dir_to_goal_y))
 
-        # Normalize vector
-        dist = (dx**2 + dy**2) ** 0.5
-        if dist > 0:
-            dx /= dist
-            dy /= dist
+        if norm_dir == 0:
+            return self.home_position  # Fallback
 
-        # Position slightly behind ball on path to goal
-        # This will make the robot approach the ball from the right angle
-        behind_x = ball["x"] - dx * 0.2
-        behind_y = ball["y"] - dy * 0.2
+        # Point ahead of ball
+        dist_ahead = 1.0  # meters
+        point_ahead_x = ball_pos[0] + (dir_to_goal_x / norm_dir) * dist_ahead
+        point_ahead_y = ball_pos[1] + (dir_to_goal_y / norm_dir) * dist_ahead
 
-        return (behind_x, behind_y)
+        # Offset sideways for a passing option
+        # Perpendicular vector: (-dy, dx) or (dy, -dx)
+        side_offset_dist = 0.8  # meters
+        # Alternate side based on robot ID or ball Y position
+        if ball_pos[1] > 0:  # If ball is on top half, support on bottom
+            side_vec_x = dir_to_goal_y / norm_dir
+            side_vec_y = -dir_to_goal_x / norm_dir
+        else:  # Ball on bottom half, support on top
+            side_vec_x = -dir_to_goal_y / norm_dir
+            side_vec_y = dir_to_goal_x / norm_dir
 
-    def _calculate_support_position(self, ball: Dict) -> Tuple[float, float]:
-        """Calculate support position when not directly attacking"""
-        # Take up position on attacking half, offset from ball
-        if self.team_color == "blue":
-            support_x = min(1.0, ball["x"] + 0.5)  # Ahead of ball but not too far
+        final_target_x = point_ahead_x + side_vec_x * side_offset_dist
+        final_target_y = point_ahead_y + side_vec_y * side_offset_dist
 
-            # If ball is on one side, position on the other side
-            if ball["y"] > 0:
-                support_y = ball["y"] - 0.5
-            else:
-                support_y = ball["y"] + 0.5
-        else:
-            support_x = max(-1.0, ball["x"] - 0.5)  # Ahead of ball but not too far
+        # Clamp to field (using the general boundary enforcer later is also fine)
+        final_target_x = max(
+            self.game.field_bounds["x_min"] + FIELD_BOUNDARY_MARGIN,
+            min(
+                self.game.field_bounds["x_max"] - FIELD_BOUNDARY_MARGIN, final_target_x
+            ),
+        )
+        final_target_y = max(
+            self.game.field_bounds["y_min"] + FIELD_BOUNDARY_MARGIN,
+            min(
+                self.game.field_bounds["y_max"] - FIELD_BOUNDARY_MARGIN, final_target_y
+            ),
+        )
 
-            # If ball is on one side, position on the other side
-            if ball["y"] > 0:
-                support_y = ball["y"] - 0.5
-            else:
-                support_y = ball["y"] + 0.5
+        return (final_target_x, final_target_y)
 
-        return (support_x, support_y)
+    def _calculate_ball_approach_for_kick(
+        self, ball_pos: Tuple[float, float], kick_target_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        """Helper to calculate approach point behind ball, facing kick_target_pos."""
+        # Same as Goalkeeper's for now
+        offset_dist = 0.15
+        dx = kick_target_pos[0] - ball_pos[0]
+        dy = kick_target_pos[1] - ball_pos[1]
+        norm = self._distance((0, 0), (dx, dy))
+        if norm == 0:
+            return (
+                ball_pos[0]
+                - (offset_dist if self.team_color == "blue" else -offset_dist),
+                ball_pos[1],
+            )
+
+        return (
+            ball_pos[0] - (dx / norm * offset_dist),
+            ball_pos[1] - (dy / norm * offset_dist),
+        )

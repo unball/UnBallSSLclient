@@ -9,10 +9,12 @@
     },
     "match": {
         "team_1": "UnBall",
-        "team_2": "Unknown",
-        "event": "Unknown",
+        "team_2": "Opponent",
+        "event": "Test",
         "team_side": "left",
         "team_color": "blue",
+        "division": "Entry Level",
+        "num_robots_our_team": 3,
         "time_logging": false
     }
 }

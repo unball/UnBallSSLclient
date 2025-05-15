@@ -56,6 +56,7 @@ class GameController(threading.Thread):
             },
         }
 
+        # Store reference to network config for easy access
         self.referee_port = self.config["network"]["referee_port"]
         self.host = self.config["network"]["referee_ip"]
         self.referee_sock = None
@@ -67,28 +68,39 @@ class GameController(threading.Thread):
             f"Creating socket with address: {self.host} and port: {self.referee_port}"
         )
 
-        self.referee_sock = self._create_socket()
-        self._wait_to_connect()
+        try:
+            self.referee_sock = self._create_socket()
+            self._wait_to_connect()
 
-        self.running = True
-        print("Referee module started!")
+            self.running = True
+            print("Referee module started!")
 
-        while self.running:
-            referee = Referee()
-            try:
-                data = self.referee_sock.recv(2048)
-                referee.ParseFromString(data)
-                last_frame = json.loads(MessageToJson(referee))
-                self.new_data = self.update_referee(last_frame)
-            except Exception as e:
-                print(f"Error processing referee message: {e}")
-        self.stop()
+            while self.running:
+                referee = Referee()
+                try:
+                    data = self.referee_sock.recv(2048)
+                    referee.ParseFromString(data)
+                    last_frame = json.loads(MessageToJson(referee))
+                    self.new_data = self.update_referee(last_frame)
+                except socket.timeout:
+                    # This is expected when socket is non-blocking or has timeout
+                    continue
+                except Exception as e:
+                    print(f"Error processing referee message: {e}")
+                    time.sleep(0.1)  # Avoid rapid error spam
+        except Exception as e:
+            print(f"Fatal error in referee run loop: {e}")
+        finally:
+            self.stop()
 
     def stop(self):
         """Stop the game controller thread"""
         self.running = False
         if self.referee_sock:
-            self.referee_sock.close()
+            try:
+                self.referee_sock.close()
+            except Exception as e:
+                print(f"Error closing referee socket: {e}")
             self.referee_sock = None
         print("Referee module stopped!")
 
@@ -146,17 +158,40 @@ class GameController(threading.Thread):
     def _wait_to_connect(self):
         """Wait for initial connection"""
         if self.referee_sock:
-            self.referee_sock.recv(1024)
+            try:
+                # Set a timeout for the initial connection
+                self.referee_sock.settimeout(2.0)
+                self.referee_sock.recv(1024)
+                # Remove timeout after initial connection
+                self.referee_sock.settimeout(None)
+            except socket.timeout:
+                print("Warning: Timeout waiting for initial referee packet")
+            except Exception as e:
+                print(f"Error during initial referee connection: {e}")
 
     def _create_socket(self):
         """Create and configure multicast UDP socket"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # Changed binding to empty string to match Vision module
-        sock.bind(("", self.referee_port))
-        mreq = struct.pack("4sl", socket.inet_aton(self.host), socket.INADDR_ANY)
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        return sock
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+            # Improved binding - try specific host first, then fallback to any
+            try:
+                sock.bind((self.host, self.referee_port))
+            except socket.error:
+                print(
+                    f"Warning: Could not bind to {self.host}:{self.referee_port}, trying 0.0.0.0"
+                )
+                sock.bind(("", self.referee_port))
+
+            # Join multicast group
+            mreq = struct.pack("4sl", socket.inet_aton(self.host), socket.INADDR_ANY)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+            return sock
+        except Exception as e:
+            print(f"Error creating referee socket: {e}")
+            raise
 
     def print_formatted_referee_data(self):
         """Print referee data in formatted output"""
