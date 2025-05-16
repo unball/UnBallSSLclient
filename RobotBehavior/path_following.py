@@ -1,8 +1,9 @@
 from .robot_state_machine import DEBUG_ROBOT_BEHAVIOR
+from typing import Tuple, List
 
 
 class PathFollower:
-    def __init__(self, lookahead_distance=0.2):
+    def __init__(self, lookahead_distance: float = 0.2):
         self.lookahead_distance = lookahead_distance
         if DEBUG_ROBOT_BEHAVIOR:
             print(
@@ -39,6 +40,8 @@ class PathFollower:
             print("No suitable point found, using last path point")
         return path[-1]
 
-    def _distance(self, point1, point2):
+    def _distance(
+        self, point1: Tuple[float, float], point2: Tuple[float, float]
+    ) -> float:
         """Calculate Euclidean distance between two points"""
         return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5

@@ -13,25 +13,36 @@ from protocols.grsim.ssl_simulation_robot_control_pb2 import (
     MoveLocalVelocity,
 )
 
+# Debug flags - set these to control debug output
+DEBUG_COMMAND_QUEUE = False  # Print when commands are queued
+DEBUG_COMMAND_SEND = False  # Print when commands are sent
+DEBUG_COMMAND_PROCESS = False  # Print during command processing
+DEBUG_STATS = False  # Print statistics
+DEBUG_ERRORS = True  # Always print errors (keep this True)
+
 
 @dataclass
-class RobotCommand:
+class CommandData:
     """Data class for robot commands"""
 
     robot_id: int
     command_type: str  # 'wheel', 'global', 'local'
-    values: tuple  # (w1,w2,w3,w4) or (vx,vy,w)
+    move_values: tuple = None  # (vx,vy,w) or (w1,w2,w3,w4) or (forward,left,w)
+    kick_values: tuple = None  # (kick_speed_x, kick_speed_z, dribbler_speed)
 
 
 class ThreadedRobotControlClient:
     """Threaded client for controlling SSL robots in simulation"""
 
-    def __init__(self, ip: str = "localhost", team_port: int = 10301):
+    def __init__(
+        self, ip: str = "localhost", team_port: int = 10301, debug_enabled: bool = False
+    ):
         """Initialize threaded robot control client
 
         Args:
             ip: Server IP address
             team_port: Team control port (10301 for blue, 10302 for yellow)
+            debug_enabled: Enable debug output for this instance
         """
         self.ip = ip
         self.team_port = team_port
@@ -42,12 +53,20 @@ class ThreadedRobotControlClient:
         self.failed_commands = 0
         self.last_command_time = None
 
+        # Instance-specific debug flag
+        self.debug_enabled = debug_enabled or DEBUG_COMMAND_QUEUE or DEBUG_COMMAND_SEND
+
+        if DEBUG_STATS or self.debug_enabled:
+            print(f"ThreadedRobotControlClient initialized for port {team_port}")
+
     def start(self):
         """Start the command processing thread"""
         self.running = True
         self.thread = threading.Thread(target=self._process_commands)
         self.thread.daemon = True
         self.thread.start()
+        if DEBUG_STATS or self.debug_enabled:
+            print(f"ThreadedRobotControlClient started for port {self.team_port}")
 
     def stop(self):
         """Stop the command processing thread"""
@@ -55,6 +74,8 @@ class ThreadedRobotControlClient:
         if self.thread:
             self.thread.join()
             self.thread = None
+        if DEBUG_STATS or self.debug_enabled:
+            print(f"ThreadedRobotControlClient stopped for port {self.team_port}")
 
     def _process_commands(self):
         """Process commands from queue and send to simulator"""
@@ -62,15 +83,70 @@ class ThreadedRobotControlClient:
             try:
                 if not self.command_queue.empty():
                     cmd = self.command_queue.get_nowait()
-                    if cmd.command_type == "wheel":
-                        self._send_wheel_velocity(cmd.robot_id, *cmd.values)
-                    elif cmd.command_type == "global":
-                        self._send_global_velocity(cmd.robot_id, *cmd.values)
-                    elif cmd.command_type == "local":
-                        self._send_local_velocity(cmd.robot_id, *cmd.values)
+
+                    # Create control message
+                    control = RobotControl()
+                    robot_command = control.robot_commands.add()
+                    robot_command.id = cmd.robot_id
+
+                    # Set movement command
+                    if cmd.command_type == "global" and cmd.move_values:
+                        vx, vy, angular = cmd.move_values
+
+                        # Debug output for processing (only if significant movement)
+                        if DEBUG_COMMAND_PROCESS and (
+                            abs(vx) > 0.01 or abs(vy) > 0.01 or abs(angular) > 0.01
+                        ):
+                            print(
+                                f"_process_commands: Processing robot {cmd.robot_id}: vx={vx:.3f}, vy={vy:.3f}, w={angular:.3f}"
+                            )
+
+                        global_vel = MoveGlobalVelocity()
+                        global_vel.x = vx
+                        global_vel.y = vy
+                        global_vel.angular = angular
+                        robot_command.move_command.global_velocity.CopyFrom(global_vel)
+
+                    elif cmd.command_type == "wheel" and cmd.move_values:
+                        w1, w2, w3, w4 = cmd.move_values
+                        wheel_vel = MoveWheelVelocity()
+                        wheel_vel.front_right = w1
+                        wheel_vel.back_right = w2
+                        wheel_vel.back_left = w3
+                        wheel_vel.front_left = w4
+                        robot_command.move_command.wheel_velocity.CopyFrom(wheel_vel)
+
+                    elif cmd.command_type == "local" and cmd.move_values:
+                        forward, left, angular = cmd.move_values
+                        local_vel = MoveLocalVelocity()
+                        local_vel.forward = forward
+                        local_vel.left = left
+                        local_vel.angular = angular
+                        robot_command.move_command.local_velocity.CopyFrom(local_vel)
+
+                    # Set kick command if provided
+                    if cmd.kick_values:
+                        kick_speed_x, kick_speed_z, dribbler_speed = cmd.kick_values
+                        robot_command.kick_speed = kick_speed_x
+                        robot_command.kick_angle = kick_speed_z
+                        robot_command.dribbler_speed = dribbler_speed
+
+                    # Send command
+                    result = self._send_command(control)
+
+                    # Debug output for successful send (much more selective)
+                    if DEBUG_COMMAND_SEND and result and cmd.command_type == "global":
+                        vx, vy, angular = cmd.move_values or (0, 0, 0)
+                        if abs(vx) > 0.01 or abs(vy) > 0.01 or abs(angular) > 0.01:
+                            print(f"Successfully sent command to robot {cmd.robot_id}")
+
                 time.sleep(1 / 300)  # Process at 300Hz
             except Exception as e:
-                print(f"Error processing command: {e}")
+                if DEBUG_ERRORS:
+                    print(f"Error processing command: {e}")
+                    import traceback
+
+                    traceback.print_exc()
 
     def _send_command(self, control_message: RobotControl) -> bool:
         """Send a control message to the simulator"""
@@ -83,7 +159,8 @@ class ThreadedRobotControlClient:
                 self.last_command_time = time.time()
                 return True
         except Exception as e:
-            print(f"Error sending command: {e}")
+            if DEBUG_ERRORS:
+                print(f"Error sending command to port {self.team_port}: {e}")
             self.failed_commands += 1
             return False
 
@@ -106,140 +183,95 @@ class ThreadedRobotControlClient:
             "last_command_time": self.last_command_time,
         }
 
-    def _send_wheel_velocity(
-        self, robot_id: int, w1: float, w2: float, w3: float, w4: float
-    ):
-        """Internal method to send wheel velocities"""
-        control = RobotControl()
-        robot_command = control.robot_commands.add()
-        robot_command.id = robot_id
-
-        wheel_vel = MoveWheelVelocity()
-        wheel_vel.front_right = w1
-        wheel_vel.back_right = w2
-        wheel_vel.back_left = w3
-        wheel_vel.front_left = w4
-
-        robot_command.move_command.wheel_velocity.CopyFrom(wheel_vel)
-        return self._send_command(control)
-
-    def _send_global_velocity(
-        self, robot_id: int, vx: float, vy: float, angular: float
-    ):
-        """Internal method to send global velocities"""
-        control = RobotControl()
-        robot_command = control.robot_commands.add()
-        robot_command.id = robot_id
-
-        global_vel = MoveGlobalVelocity()
-        global_vel.x = vx
-        global_vel.y = vy
-        global_vel.angular = angular
-
-        robot_command.move_command.global_velocity.CopyFrom(global_vel)
-        return self._send_command(control)
-
-    def _send_local_velocity(
-        self, robot_id: int, forward: float, left: float, angular: float
-    ):
-        """Internal method to send local velocities"""
-        control = RobotControl()
-        robot_command = control.robot_commands.add()
-        robot_command.id = robot_id
-
-        local_vel = MoveLocalVelocity()
-        local_vel.forward = forward
-        local_vel.left = left
-        local_vel.angular = angular
-
-        robot_command.move_command.local_velocity.CopyFrom(local_vel)
-        return self._send_command(control)
-
     # Public interface methods
     def send_wheel_velocity(
         self, robot_id: int, w1: float, w2: float, w3: float, w4: float
     ):
         """Queue wheel velocity command"""
-        self.command_queue.put(RobotCommand(robot_id, "wheel", (w1, w2, w3, w4)))
+        self.command_queue.put(
+            CommandData(robot_id, "wheel", move_values=(w1, w2, w3, w4))
+        )
 
     def send_global_velocity(self, robot_id: int, vx: float, vy: float, angular: float):
         """Queue global velocity command"""
-        self.command_queue.put(RobotCommand(robot_id, "global", (vx, vy, angular)))
+        # Debug output only for significant movement and when enabled
+        if DEBUG_COMMAND_QUEUE and (
+            abs(vx) > 0.01 or abs(vy) > 0.01 or abs(angular) > 0.01
+        ):
+            print(
+                f"ThreadedClient port {self.team_port}: Queuing command for robot {robot_id}: vx={vx:.3f}, vy={vy:.3f}, w={angular:.3f}"
+            )
+
+        self.command_queue.put(
+            CommandData(robot_id, "global", move_values=(vx, vy, angular))
+        )
 
     def send_local_velocity(
         self, robot_id: int, forward: float, left: float, angular: float
     ):
         """Queue local velocity command"""
         self.command_queue.put(
-            RobotCommand(robot_id, "local", (forward, left, angular))
+            CommandData(robot_id, "local", move_values=(forward, left, angular))
         )
 
-    def move_robot_circle(
-        self, robot_id: int, radius: float = 1.0, angular_speed: float = 1.0
+    def send_command_with_kick(
+        self,
+        robot_id: int,
+        vx: float,
+        vy: float,
+        angular: float,
+        kick_speed_x: float,
+        kick_speed_z: float = 0.0,
+        dribbler_speed: float = 0.0,
     ):
-        """Move robot in circle pattern"""
-        linear_speed = radius * angular_speed
-        t0 = time.time()
+        """Queue a command that includes global velocity and kick parameters."""
+        # Disable dribbler for SSL-EL
+        if dribbler_speed != 0.0:
+            dribbler_speed = 0.0
 
-        try:
-            while self.running:
-                t = time.time() - t0
-                angle = angular_speed * t
+        move_vals = (vx, vy, angular)
+        kick_vals = (kick_speed_x, kick_speed_z, dribbler_speed)
 
-                vx = -linear_speed * math.sin(angle)
-                vy = linear_speed * math.cos(angle)
+        # Debug output only when enabled
+        if DEBUG_COMMAND_QUEUE and (
+            abs(vx) > 0.01 or abs(vy) > 0.01 or abs(angular) > 0.01
+        ):
+            print(
+                f"ThreadedClient port {self.team_port}: Queuing command for robot {robot_id}: vx={vx:.3f}, vy={vy:.3f}, w={angular:.3f}"
+            )
 
-                self.send_global_velocity(robot_id, vx, vy, angular_speed)
-                time.sleep(1 / 60)
-        except KeyboardInterrupt:
-            self.send_global_velocity(robot_id, 0, 0, 0)
+        self.command_queue.put(
+            CommandData(
+                robot_id, "global", move_values=move_vals, kick_values=kick_vals
+            )
+        )
 
+    def kick_flat(self, robot_id: int, kick_speed: float):
+        """Send a flat kick command"""
+        if DEBUG_COMMAND_QUEUE:
+            print(
+                f"ThreadedClient port {self.team_port}: Kick command for robot {robot_id}, speed={kick_speed}"
+            )
+        self.command_queue.put(
+            CommandData(
+                robot_id,
+                "global",
+                move_values=(0, 0, 0),
+                kick_values=(kick_speed, 0.0, 0.0),
+            )
+        )
 
-def main():
-    debug = True
-
-    try:
-        # Test clients
-        blue_client = ThreadedRobotControlClient(team_port=10301)
-        yellow_client = ThreadedRobotControlClient(team_port=10302)
-
-        blue_client.start()
-        yellow_client.start()
-
-        if debug:
-            print("[DEBUG] Starting robot control test...")
-            last_stats_time = time.time()
-
-        while True:
-            # Test some commands
-            blue_client.send_wheel_velocity(0, 15, 1, 15, 1)
-            blue_client.send_global_velocity(1, 1, 0, 0)
-            blue_client.send_local_velocity(2, 0, 1, 0)
-
-            yellow_client.send_wheel_velocity(0, 15, 1, 15, 1)
-            yellow_client.send_global_velocity(1, -1, 0, 0)
-            yellow_client.send_local_velocity(2, 0, -1, 0)
-
-            # Print stats every 5 seconds
-            current_time = time.time()
-            if current_time - last_stats_time >= 5:
-                print("\n[DEBUG] === 5 Second Statistics ===")
-                print("Blue Team:", blue_client.get_stats())
-                print("Yellow Team:", yellow_client.get_stats())
-                print("================================\n")
-                last_stats_time = current_time
-
-            time.sleep(1 / 60)
-
-    except KeyboardInterrupt:
-        print("\n[DEBUG] === Final Statistics ===")
-        blue_client.stop()
-        yellow_client.stop()
-        print("Blue Team:", blue_client.get_stats())
-        print("Yellow Team:", yellow_client.get_stats())
-        print("============================")
-        print("[DEBUG] Stopping robot control test")
-
-
-if __name__ == "__main__":
-    main()
+    def kick_chip(self, robot_id: int, kick_speed: float):
+        """Send a chip kick command"""
+        if DEBUG_COMMAND_QUEUE:
+            print(
+                f"ThreadedClient port {self.team_port}: Chip kick command for robot {robot_id}, speed={kick_speed}"
+            )
+        self.command_queue.put(
+            CommandData(
+                robot_id,
+                "global",
+                move_values=(0, 0, 0),
+                kick_values=(kick_speed, kick_speed, 0.0),
+            )
+        )

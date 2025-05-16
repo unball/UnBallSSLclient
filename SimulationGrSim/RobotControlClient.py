@@ -189,6 +189,35 @@ class RobotControlClient:
             )
         return success
 
+    def send_command_with_kick(
+        self,
+        robot_id: int,
+        vx: float,
+        vy: float,
+        angular: float,
+        kick_speed_x: float,
+        kick_speed_z: float = 0.0,
+        dribbler_speed: float = 0.0,
+    ):
+        """Queue a command that includes global velocity and kick parameters."""
+        if dribbler_speed != 0.0:
+            dribbler_speed = 0.0
+
+        move_vals = (vx, vy, angular)
+        kick_vals = (kick_speed_x, kick_speed_z, dribbler_speed)
+
+        # ADD DEBUG OUTPUT
+        if abs(vx) > 0.01 or abs(vy) > 0.01 or abs(angular) > 0.01:
+            print(
+                f"ThreadedClient port {self.team_port}: Queuing command for robot {robot_id}: vx={vx:.3f}, vy={vy:.3f}, w={angular:.3f}"
+            )
+
+        self.command_queue.put(
+            CommandData(
+                robot_id, "global", move_values=move_vals, kick_values=kick_vals
+            )
+        )
+
     def get_stats(self):
         """Get command statistics"""
         return {

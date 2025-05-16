@@ -33,7 +33,7 @@ from RobotBehavior.robot_state_machine import (
 from RobotBehavior.robot_states import RobotRole
 
 # Global debug flag
-GAME_DEBUG = True
+GAME_DEBUG = False
 
 # Forcing robot_state_machine debug from here if needed:
 import RobotBehavior.robot_state_machine as rsm
@@ -229,6 +229,25 @@ class Game:
         self._update_thread.start()
         if GAME_DEBUG:
             print("Game: Main update loop started")
+
+    def test_simple_movement(self):
+        """Test if robots can receive basic movement commands"""
+        print("Testing simple robot movement...")
+        if self.active_controller:
+            print(f"Active controller: {self.active_controller}")
+            print(f"Controller mode: {self.active_controller.mode}")
+
+            # Test robot 0
+            print("Sending test command to robot 0: move forward")
+            result = self.active_controller.send_global_velocity(0, 0.5, 0.0, 0.0)
+            print(f"Command result: {result}")
+
+            # Wait and stop
+            time.sleep(2)
+            print("Stopping robot 0")
+            self.active_controller.send_global_velocity(0, 0.0, 0.0, 0.0)
+        else:
+            print("ERROR: No active controller!")
 
     def update_field_bounds_for_division(self, division_name: str):
         """Update field bounds based on division and vision data"""
@@ -535,14 +554,15 @@ class Game:
         if GAME_DEBUG:
             print(f"Game: Team switch complete to {new_team_color}")
 
-    def set_control_mode(self, mode: str, team_color: str):
+    def set_control_mode(self, mode: str, team_color: str = None):
         """Switch between grSim and IRL control"""
         if mode not in self.controllers:
             if GAME_DEBUG:
                 print(f"Game: Invalid control mode '{mode}'")
             return
 
-        current_team_color = self.config["match"]["team_color"]
+        # Use provided team color or current team color
+        current_team_color = team_color or self.config["match"]["team_color"]
 
         if self.active_controller == self.controllers[mode][current_team_color]:
             if GAME_DEBUG:
@@ -554,9 +574,11 @@ class Game:
                 f"Game: Switching control mode to {mode} for team {current_team_color}"
             )
 
+        # Stop current controller
         if self.active_controller:
             self.active_controller.stop()
 
+        # Update config and set new controller
         self.config["match"]["control_mode"] = mode
         self.active_controller = self.controllers[mode][current_team_color]
         self.active_controller.start()

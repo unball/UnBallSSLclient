@@ -38,6 +38,14 @@ class RobotState(Enum):
     # Set Piece States (can be used to denote active participation in a set piece)
     PREPARING_SET_PIECE = "PREPARING_SET_PIECE"  # Robot is positioning itself according to rules for a set piece (kick-off, free-kick).
     TAKING_SET_PIECE = "TAKING_SET_PIECE"  # Robot is the one designated to execute the set piece (e.g., taking a penalty or free kick).
+
+    # Ball Placement States (ADD THESE MISSING STATES)
+    BALL_PLACEMENT_ACTIVE = (
+        "BALL_PLACEMENT_ACTIVE"  # Robot is actively placing the ball
+    )
+    BALL_PLACEMENT_AVOIDING = (
+        "BALL_PLACEMENT_AVOIDING"  # Robot is staying away from ball placement
+    )
     # -----------------------------------------------------------------
 
 
