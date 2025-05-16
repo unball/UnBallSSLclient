@@ -1,4 +1,3 @@
-# At the top of the file, update the imports:
 import math
 import time
 from threading import Lock
