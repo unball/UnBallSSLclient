@@ -3,11 +3,6 @@ import math
 import time
 from threading import Lock
 from typing import Tuple, Dict, Optional, List, Any, TYPE_CHECKING
-
-import math
-import time
-from threading import Lock
-from typing import Tuple, Dict, Optional, List, Any
 from .robot_states import RobotState, RobotRole
 
 if TYPE_CHECKING:
@@ -27,7 +22,7 @@ ROBOT_MAX_LINEAR_SPEED = 1.5  # m/s (SSL-EL Rule 8.3.2)
 ROBOT_MAX_SPEED_STOP_STATE = 0.75  # m/s (SSL-EL Rule 8.3.3)
 ROBOT_MAX_ANGULAR_SPEED = math.pi * 2.5  # Increased for agility
 APPROACH_SLOWDOWN_DISTANCE = 0.4  # m
-FINE_TUNE_DISTANCE = 0.05  # m, for arrival
+FINE_TUNE_DISTANCE = 0.01 # m, for arrival
 TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_HIGH = math.pi / 2  # 90 deg
 TURN_SPEED_REDUCTION_FACTOR_HIGH = 0.3
 TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_LOW = math.pi / 4  # 45 deg
