@@ -2,9 +2,11 @@ todo:
 
 # important
 
-- see why the robots arent following the path properly and why they only move when changing teams
-- see why the robots when moving just go away if they're very fast
-- não sei, socorro alguem me ajuda kk
+- perfomance
+- reduzir o numero de debugs no terminal/arrumar as flags
+- arrumar todos os estados do jogo
+- talvez criar de lógica de estados dos robôs para o jogo 
+- angulos 
 
 # important but not as much
 
@@ -16,3 +18,5 @@ todo:
 - Better update the screen when no vision data is received
 - Put the name of the teams in the Team A and Team B
 - Change the size of the window accordingly to the maximize button
+- Fix other tabs (debug e posicionamento)
+- IRL 
