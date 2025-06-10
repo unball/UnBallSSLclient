@@ -44,6 +44,11 @@ sudo apt-get install qttools5-dev
 
 ## 🏗️ Arquitetura do Sistema
 
+<!--
+The following diagram is in Mermaid syntax. 
+If your Markdown renderer does not support Mermaid, please use a tool like https://mermaid.live/ to view it.
+-->
+
 ```mermaid
 graph TB
   subgraph "Entrada de Dados"
