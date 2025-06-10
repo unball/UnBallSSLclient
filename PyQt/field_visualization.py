@@ -456,9 +456,9 @@ class FieldVisualization(QFrame):
                 )  # Semi-transparent if outside field but in viz bounds
             robot_shape_item.setBrush(QBrush(current_brush_color))
 
-            line_len = robot_size * 0.5 # Make line a bit longer
+            line_len = robot_size * 0.5  # Make line a bit longer
             end_x = line_len * math.cos(orientation)
-            end_y = line_len * math.sin(
+            end_y = -line_len * math.sin(
                 orientation
             )  # Screen Y is inverted for math.sin
             direction_line_item.setLine(
