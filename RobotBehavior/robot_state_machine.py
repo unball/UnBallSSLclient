@@ -5,53 +5,65 @@ from typing import Tuple, Dict, Optional, List, Any
 from .robot_states import RobotState, RobotRole
 from utils.logger import get_logger
 
-# --- Constants for Behavior Tuning & SSL-EL Rules ---
+# --- Constantes para Ajuste de Comportamento e Regras da SSL-EL ---
 DEBUG_ROBOT_BEHAVIOR = False
 
-# Pathing
-PATH_LOOKAHEAD_DISTANCE = 0.2
-PATH_REPLAN_INTERVAL = 0.3
-PATH_TARGET_CHANGE_THRESHOLD = 0.1
+# --- Constantes do Planejador de Trajetória (Path Planning) ---
+PATH_LOOKAHEAD_DISTANCE = 0.2  # Distância (m) à frente no caminho que o robô mira.
+PATH_REPLAN_INTERVAL = 0.3  # Intervalo (s) para solicitar um novo caminho.
+PATH_TARGET_CHANGE_THRESHOLD = (
+    0.1  # Distância (m) que o alvo precisa mudar para forçar um novo planejamento.
+)
 
-# Movement
-ROBOT_MAX_LINEAR_SPEED = 1.5  # m/s (SSL-EL Rule 8.3.2)
-ROBOT_MAX_SPEED_STOP_STATE = 0.75  # m/s (SSL-EL Rule 8.3.3)
-ROBOT_MAX_ANGULAR_SPEED = math.pi * 2.5  # Increased for agility
-APPROACH_SLOWDOWN_DISTANCE = 0.4  # m
-FINE_TUNE_DISTANCE = 0.01  # m, for arrival
-TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_HIGH = math.pi / 2  # 90 deg
-TURN_SPEED_REDUCTION_FACTOR_HIGH = 0.3
-TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_LOW = math.pi / 4  # 45 deg
-TURN_SPEED_REDUCTION_FACTOR_LOW = 0.6
-FIELD_BOUNDARY_MARGIN = 0.05  # m
-IMMEDIATE_BOUNDARY_STOP_MARGIN = 0.02  # m, very close to edge
+# --- Constantes de Movimento ---
+ROBOT_MAX_LINEAR_SPEED = 1.5  # m/s (Regra 8.3.2 da SSL-EL)
+ROBOT_MAX_SPEED_STOP_STATE = 0.75  # m/s (Regra 8.3.3 da SSL-EL para o estado STOP)
+ROBOT_MAX_ANGULAR_SPEED = math.pi * 2.5  # rad/s, aumentado para maior agilidade.
+APPROACH_SLOWDOWN_DISTANCE = (
+    0.4  # m, distância para começar a desacelerar ao se aproximar do alvo.
+)
+FINE_TUNE_DISTANCE = 0.01  # m, distância para considerar que o robô chegou ao alvo.
+TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_HIGH = (
+    math.pi / 2
+)  # 90 graus, limiar para grande redução de velocidade em curvas.
+TURN_SPEED_REDUCTION_FACTOR_HIGH = 0.3  # Fator de redução para curvas acentuadas.
+TURN_SPEED_REDUCTION_ANGLE_THRESHOLD_LOW = (
+    math.pi / 4
+)  # 45 graus, limiar para pequena redução de velocidade em curvas.
+TURN_SPEED_REDUCTION_FACTOR_LOW = 0.6  # Fator de redução para curvas suaves.
+FIELD_BOUNDARY_MARGIN = 0.05  # m, margem para evitar que o robô saia do campo.
+IMMEDIATE_BOUNDARY_STOP_MARGIN = (
+    0.02  # m, margem muito próxima da borda para parada imediata.
+)
 
-# SSL-EL Game Rules Constants
-BALL_AVOIDANCE_DISTANCE_STOP_STATE = 0.5  # m (Rule 5.1.1)
-GRACE_PERIOD_HALT_BRAKE = 2.0  # s (Rule 5.1.2)
-KICK_RESTART_BALL_MOVE_DISTANCE = 0.05  # m (Rule 5.4)
-KICK_TIMEOUT_SECONDS = 10.0  # s (Rule 5.4, 5.3.5.6)
-MAX_KICK_SPEED_GRSIM = 6.0  # m/s (grSim default, actual ball speed is different)
+# --- Constantes das Regras de Jogo (SSL-EL) ---
+BALL_AVOIDANCE_DISTANCE_STOP_STATE = 0.5  # m (Regra 5.1.1)
+GRACE_PERIOD_HALT_BRAKE = 2.0  # s (Regra 5.1.2)
+KICK_RESTART_BALL_MOVE_DISTANCE = 0.05  # m (Regra 5.4)
+KICK_TIMEOUT_SECONDS = 10.0  # s (Regra 5.4, 5.3.5.6)
+MAX_KICK_SPEED_GRSIM = (
+    6.0  # m/s (padrão do grSim, a velocidade real da bola é diferente)
+)
 
-DEFENDER_DISTANCE_FROM_BALL_OPPONENT_KICK = 0.5  # m (Rule 5.3.3 / 8.3.3)
-DISTANCE_FROM_OPPONENT_DEFENSE_AREA_STOP_FK = 0.2  # m (Rule 8.3.1)
-PENALTY_KICK_OTHER_ROBOTS_DISTANCE_BEHIND_BALL = 1.0  # m (Rule 5.3.5.3)
+DEFENDER_DISTANCE_FROM_BALL_OPPONENT_KICK = 0.5  # m (Regra 5.3.3 / 8.3.3)
+DISTANCE_FROM_OPPONENT_DEFENSE_AREA_STOP_FK = 0.2  # m (Regra 8.3.1)
+PENALTY_KICK_OTHER_ROBOTS_DISTANCE_BEHIND_BALL = 1.0  # m (Regra 5.3.5.3)
 
-# Ball Placement (Rule 5.2 & 8.3.3)
+# --- Constantes de Posicionamento de Bola (Ball Placement) (Regra 5.2 & 8.3.3) ---
 BALL_PLACEMENT_OPPONENT_STADIUM_DISTANCE = 0.5
 BALL_PLACEMENT_SUCCESS_RADIUS = 0.15
 BALL_PLACEMENT_MAX_TIME = 30.0
 BALL_PLACEMENT_MIN_DIST_NEXT_CMD_FK = 0.05
 BALL_PLACEMENT_MIN_DIST_NEXT_CMD_FORCE_START = 0.5
 
-# Role Specific
+# --- Constantes Específicas de Papéis (Roles) ---
 ATTACKER_BALL_OWNERSHIP_THRESHOLD = (
-    0.12  # m, (robot radius ~0.09 + ball_radius ~0.0215 = ~0.11)
+    0.12  # m, (raio do robô ~0.09 + raio da bola ~0.0215 = ~0.11)
 )
 GOALKEEPER_GOAL_LINE_X_OFFSET = 0.05
 OWN_HALF_X_OFFSET = 0.05
 
-# Field constants (Defaults for SSL-EL, updated by game.field_bounds)
+# --- Constantes do Campo (Padrões para SSL-EL, atualizadas por game.field_bounds) ---
 FIELD_LENGTH_DEFAULT = 4.5
 FIELD_WIDTH_DEFAULT = 3.0
 GOAL_WIDTH_DEFAULT = 0.8
@@ -63,7 +75,18 @@ PENALTY_SPOT_ABS_X_DEFAULT = (FIELD_LENGTH_DEFAULT / 2.0) - 1.0
 
 
 class PathFollower:
+    """
+    Implementa um seguidor de caminho simples usando o algoritmo Pure Pursuit.
+    O robô mira em um ponto "lookahead" à frente em sua trajetória planejada.
+    """
+
     def __init__(self, lookahead_distance: float = PATH_LOOKAHEAD_DISTANCE):
+        """
+        Inicializa o seguidor de caminho.
+
+        Args:
+            lookahead_distance: A distância à frente no caminho para mirar.
+        """
         self.lookahead_distance = lookahead_distance
         self.logger = get_logger("path_follower")
         self.logger.debug(
@@ -73,6 +96,16 @@ class PathFollower:
     def get_target_point(
         self, current_pos: Tuple[float, float], path: List[Tuple[float, float]]
     ) -> Tuple[float, float]:
+        """
+        Encontra o ponto alvo no caminho para o robô seguir.
+
+        Args:
+            current_pos: A posição atual do robô (x, y).
+            path: A lista de pontos (x, y) que formam o caminho.
+
+        Returns:
+            O ponto alvo (lookahead) no caminho.
+        """
         if not path:
             self.logger.warning(f"Empty path for current_pos {current_pos}")
             return current_pos
@@ -86,30 +119,52 @@ class PathFollower:
         return final_goal
 
     def _distance(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        """Calcula a distância euclidiana entre dois pontos."""
         return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
 
 class RobotStateMachine:
+    """
+    Máquina de estados base para um robô.
+    Gerencia o estado atual, a lógica de movimento, o processamento de comandos do juiz
+    e a interação com outros componentes como o planejador de caminho.
+    """
+
     def __init__(self, robot_id: int, team_color: str, game: Any):
+        """
+        Inicializa a máquina de estados do robô.
+
+        Args:
+            robot_id: O ID do robô (0 a N-1).
+            team_color: A cor da equipe ('blue' ou 'yellow').
+            game: A instância principal do jogo, que contém dados de visão, juiz, etc.
+        """
         self.robot_id = robot_id
         self.team_color = team_color.lower()
         self.game = game
         self.logger = get_logger(f"robot_behavior.sm.{self.robot_id}")
+
         self.current_state: RobotState = RobotState.IDLE
         self.role: Optional[RobotRole] = None
         self.target_position: Optional[Tuple[float, float]] = None
+
         self.state_lock = Lock()
         self.path_follower = PathFollower()
         self.current_path: List[Tuple[float, float]] = []
         self.last_path_request_time: float = 0.0
         self.last_target_for_path: Optional[Tuple[float, float]] = None
+
         self.last_game_command_from_referee: str = ""
-        self.is_designated_kicker: bool = False
+        self.is_designated_kicker: bool = (
+            False  # Usado para cobrador de faltas e posicionador de bola.
+        )
+
         self.home_position: Tuple[float, float] = (0.0, 0.0)
         self.field_bounds = game.field_bounds.copy()
         self.goal_half_width = GOAL_WIDTH_DEFAULT / 2.0
         self.own_goal_line_x = 0.0
         self.attack_direction_x_sign = 1
+
         self._update_geometry_references()
 
         self.logger.info(
@@ -117,6 +172,7 @@ class RobotStateMachine:
         )
 
     def _update_geometry_references(self):
+        """Atualiza as referências de geometria do campo com base nos dados mais recentes da visão."""
         self.field_bounds = self.game.field_bounds.copy()
         self.own_goal_line_x = (
             -self.field_bounds.get("x_max", FIELD_LENGTH_DEFAULT / 2.0)
@@ -132,6 +188,7 @@ class RobotStateMachine:
         self.goal_half_width = vision_geom.get("goalWidth", GOAL_WIDTH_DEFAULT) / 2.0
 
     def get_team_from_command_suffix(self, game_command: str) -> Optional[str]:
+        """Extrai a cor da equipe ('blue' ou 'yellow') de um comando do juiz."""
         if game_command.endswith("_BLUE"):
             return "blue"
         if game_command.endswith("_YELLOW"):
@@ -139,6 +196,7 @@ class RobotStateMachine:
         return None
 
     def _get_current_pos(self) -> Optional[Tuple[float, float]]:
+        """Obtém a posição atual do robô a partir dos dados da visão."""
         vision_data = self.game.get_vision_data()
         if not vision_data:
             return None
@@ -149,6 +207,7 @@ class RobotStateMachine:
         return None
 
     def _get_current_orientation(self) -> Optional[float]:
+        """Obtém a orientação atual do robô (em radianos) a partir dos dados da visão."""
         vision_data = self.game.get_vision_data()
         if not vision_data:
             return None
@@ -159,12 +218,19 @@ class RobotStateMachine:
         return None
 
     def _get_ball_pos(self, vision_data: Dict) -> Optional[Tuple[float, float]]:
+        """Obtém a posição da bola a partir dos dados da visão."""
         ball_data = vision_data.get("ball")
         if ball_data and ball_data.get("x") is not None:
             return (ball_data["x"], ball_data["y"])
         return None
 
     def update(self, vision_data: Dict):
+        """
+        O principal método de atualização da máquina de estados, chamado a cada ciclo do jogo.
+
+        Args:
+            vision_data: O dicionário mais recente com dados da visão.
+        """
         with self.state_lock:
             self._update_geometry_references()
             current_pos = self._get_current_pos()
@@ -183,9 +249,11 @@ class RobotStateMachine:
                 self.last_game_command_from_referee = game_command_from_ref
                 self.is_designated_kicker = False
 
+            # Primeiro, lida com comandos que têm prioridade (HALT, STOP)
             action_taken = self._handle_referee_commands(
                 vision_data, referee_data, current_pos, game_command_from_ref
             )
+            # Se nenhum comando prioritário foi executado, decide a próxima ação com base no estado e papel.
             if not action_taken:
                 self._decide_next_action(
                     vision_data, referee_data, current_pos, game_command_from_ref
@@ -198,6 +266,18 @@ class RobotStateMachine:
         current_pos: Tuple[float, float],
         game_command: str,
     ) -> bool:
+        """
+        Processa os comandos do juiz que exigem uma ação imediata e que sobrepõem a lógica normal.
+
+        Args:
+            vision_data: Dados da visão.
+            referee_data: Dados do juiz.
+            current_pos: Posição atual do robô.
+            game_command: O comando atual do juiz.
+
+        Returns:
+            True se um comando foi tratado e a lógica normal deve ser ignorada, False caso contrário.
+        """
         command_team_suffix = self.get_team_from_command_suffix(game_command)
         base_command = (
             game_command.replace("_BLUE", "").replace("_YELLOW", "")
@@ -371,6 +451,10 @@ class RobotStateMachine:
         current_pos: Tuple[float, float],
         game_command: str,
     ):
+        """
+        Decide a próxima ação para o robô com base em seu estado e papel.
+        Este método é uma implementação base e deve ser sobrescrito pelas classes filhas.
+        """
         if self.current_state == RobotState.PREPARING_SET_PIECE:
             self.logger.debug(
                 f"Robot {self.robot_id}: In PREPARING_SET_PIECE, (base FSM) defaulting to home."
@@ -399,6 +483,13 @@ class RobotStateMachine:
         current_pos: Tuple[float, float],
         max_speed_override: Optional[float] = None,
     ):
+        """
+        Gerencia o processo de movimento, incluindo a solicitação de caminho e o seguimento.
+
+        Args:
+            current_pos: A posição atual do robô.
+            max_speed_override: Uma velocidade máxima para sobrepor a padrão.
+        """
         if self.target_position:
             self._request_path_if_needed(current_pos, self.target_position)
             self._follow_path(current_pos, max_speed_override)
@@ -412,6 +503,13 @@ class RobotStateMachine:
     def _request_path_if_needed(
         self, current_pos: Tuple[float, float], target_pos: Tuple[float, float]
     ):
+        """
+        Solicita um novo caminho ao planejador se o alvo mudou ou o tempo de replanejamento expirou.
+
+        Args:
+            current_pos: A posição inicial do caminho.
+            target_pos: A posição final do caminho.
+        """
         now = time.time()
         target_changed = True
         if (
@@ -420,13 +518,17 @@ class RobotStateMachine:
             < PATH_TARGET_CHANGE_THRESHOLD
         ):
             target_changed = False
+
         if target_changed or (now - self.last_path_request_time > PATH_REPLAN_INTERVAL):
             reason = "target changed" if target_changed else "replan interval"
             self.logger.debug(
                 f"Robot {self.robot_id}: Requesting path for {reason} to {target_pos}"
             )
+            # Garante que a posição alvo e a inicial estão dentro dos limites para o planejador
             safe_target = self._enforce_field_boundaries(target_pos)
-            self.game.path_planner.request_path(self.robot_id, current_pos, safe_target)
+            safe_start = self._enforce_field_boundaries(current_pos)
+
+            self.game.path_planner.request_path(self.robot_id, safe_start, safe_target)
             self.last_path_request_time = now
             self.last_target_for_path = safe_target
 
@@ -435,6 +537,7 @@ class RobotStateMachine:
         current_pos: Tuple[float, float],
         max_speed_override: Optional[float] = None,
     ):
+        """Segue o caminho atual ou move-se diretamente para o ponto se não houver caminho."""
         current_orientation = self._get_current_orientation()
         if current_orientation is None:
             self.logger.warning(
@@ -442,9 +545,11 @@ class RobotStateMachine:
             )
             self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
             return
+
         path = self.game.path_planner.get_path(self.robot_id)
         if path and path != self.current_path:
             self.current_path = path
+
         if self.current_path:
             lookahead = self.path_follower.get_target_point(
                 current_pos, self.current_path
@@ -497,6 +602,7 @@ class RobotStateMachine:
     def _enforce_field_boundaries(
         self, target_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Garante que uma posição esteja dentro dos limites jogáveis do campo."""
         x = max(
             self.field_bounds["x_min"] + FIELD_BOUNDARY_MARGIN,
             min(self.field_bounds["x_max"] - FIELD_BOUNDARY_MARGIN, target_pos[0]),
@@ -518,13 +624,18 @@ class RobotStateMachine:
         target_point: Tuple[float, float],
         max_speed_override: Optional[float] = None,
     ):
+        """
+        Calcula e envia as velocidades (vx, vy, w) para mover o robô em direção a um ponto.
+
+        Args:
+            current_pos: Posição atual do robô.
+            current_orientation: Orientação atual do robô.
+            target_point: O ponto de destino.
+            max_speed_override: Velocidade máxima opcional.
+        """
         safe_target = self._enforce_field_boundaries(target_point)
         dx, dy = safe_target[0] - current_pos[0], safe_target[1] - current_pos[1]
         dist = self._distance((0, 0), (dx, dy))
-
-        self.logger.debug(
-            f"Robot {self.robot_id} _move_to_point: current={current_pos}, target={safe_target}, dist={dist:.3f}"
-        )
 
         max_speed = (
             max_speed_override
@@ -534,18 +645,12 @@ class RobotStateMachine:
         speed_factor = 1.0
         if dist < FINE_TUNE_DISTANCE:
             speed_factor = 0.0
-            self.logger.debug(
-                f"Robot {self.robot_id}: Too close to target (dist={dist:.3f} < {FINE_TUNE_DISTANCE}), speed_factor=0"
-            )
         elif dist < APPROACH_SLOWDOWN_DISTANCE:
             min_sf = 0.1
             speed_factor = min_sf + (dist - FINE_TUNE_DISTANCE) / (
                 APPROACH_SLOWDOWN_DISTANCE - FINE_TUNE_DISTANCE
             ) * (1.0 - min_sf)
             speed_factor = max(min_sf, min(1.0, speed_factor))
-            self.logger.debug(
-                f"Robot {self.robot_id}: In slowdown zone, speed_factor={speed_factor:.3f}"
-            )
 
         angle_to_target = math.atan2(dy, dx)
         orient_err = self._normalize_angle(angle_to_target - current_orientation)
@@ -566,7 +671,6 @@ class RobotStateMachine:
             (dy / dist * final_lin_speed) if dist > 0 else 0,
         )
 
-        ovx, ovy = vx, vy
         if (
             current_pos[0]
             <= self.field_bounds["x_min"] + IMMEDIATE_BOUNDARY_STOP_MARGIN
@@ -588,25 +692,17 @@ class RobotStateMachine:
         ):
             vy = 0
 
-        self.logger.debug(
-            f"Robot {self.robot_id} computed velocities: vx={vx:.3f}, vy={vy:.3f}, w={ang_vel:.3f}"
-        )
-        self.logger.debug(
-            f"Robot {self.robot_id} speed_factor={speed_factor:.3f}, orient_err={orient_err:.3f}"
-        )
-
         if hasattr(self.game, "active_controller") and self.game.active_controller:
-            self.logger.debug(f"Robot {self.robot_id} sending command to controller")
-            result = self.game.active_controller.send_command_with_kick(
+            self.game.active_controller.send_command_with_kick(
                 self.robot_id, vx, vy, ang_vel, 0, 0, 0
             )
-            self.logger.debug(f"Robot {self.robot_id} command result: {result}")
         else:
             self.logger.error(
                 f"R{self.robot_id} ERROR: No active_controller for _move_to_point!"
             )
 
     def _normalize_angle(self, angle: float) -> float:
+        """Normaliza um ângulo para o intervalo [-pi, pi]."""
         while angle > math.pi:
             angle -= 2 * math.pi
         while angle < -math.pi:
@@ -614,11 +710,13 @@ class RobotStateMachine:
         return angle
 
     def _distance(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        """Calcula a distância euclidiana entre dois pontos."""
         return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
     def _is_point_in_defense_area(
         self, point: Tuple[float, float], which_area: str = "own"
     ) -> bool:
+        """Verifica se um ponto está dentro da área de defesa (própria ou adversária)."""
         depth = DEFENSE_AREA_DEPTH_DEFAULT
         half_width = DEFENSE_AREA_WIDTH_DEFAULT / 2.0
 
@@ -640,6 +738,7 @@ class RobotStateMachine:
         )
 
     def _get_penalty_spot(self, for_us_to_attack: bool) -> Tuple[float, float]:
+        """Calcula a coordenada da marca do pênalti."""
         spot_x_sign = (
             -self.attack_direction_x_sign
             if for_us_to_attack
@@ -648,6 +747,7 @@ class RobotStateMachine:
         return (PENALTY_SPOT_ABS_X_DEFAULT * spot_x_sign, 0.0)
 
     def debug_robot_state(self, vision_data: Dict, referee_data: Optional[Dict]):
+        """Imprime o estado completo do robô para depuração."""
         current_pos = self._get_current_pos()
         current_orient = self._get_current_orientation()
         ball_pos = self._get_ball_pos(vision_data)
@@ -677,7 +777,14 @@ class RobotStateMachine:
 
 
 class GoalkeeperStateMachine(RobotStateMachine):
+    """
+    Máquina de estados especializada para o goleiro.
+    Sua principal responsabilidade é defender o gol, bloqueando a bola
+    e se posicionando corretamente na linha do gol.
+    """
+
     def __init__(self, robot_id: int, team_color: str, game: Any):
+        """Inicializa a FSM do goleiro."""
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.GOALKEEPER
         self.logger = get_logger(f"robot_behavior.goalkeeper.{self.robot_id}")
@@ -688,6 +795,7 @@ class GoalkeeperStateMachine(RobotStateMachine):
         )
 
     def _update_home_position(self):
+        """Calcula a posição inicial (home) do goleiro, ligeiramente à frente da linha do gol."""
         super()._update_geometry_references()
         home_x = self.own_goal_line_x + (
             GOALKEEPER_GOAL_LINE_X_OFFSET * self.attack_direction_x_sign
@@ -701,7 +809,9 @@ class GoalkeeperStateMachine(RobotStateMachine):
         current_pos: Tuple[float, float],
         game_command: str,
     ):
-        self.debug_robot_state(vision_data, referee_data)
+        """Lógica de decisão principal para o goleiro."""
+        if DEBUG_ROBOT_BEHAVIOR and self.robot_id == 0:
+            self.debug_robot_state(vision_data, referee_data)
         self._update_home_position()
         ball_pos = self._get_ball_pos(vision_data)
         base_ref_cmd = self.last_game_command_from_referee.replace("_BLUE", "").replace(
@@ -715,7 +825,7 @@ class GoalkeeperStateMachine(RobotStateMachine):
             if base_ref_cmd == "PREPARE_KICKOFF":
                 self.target_position = self.home_position
             elif base_ref_cmd == "PREPARE_PENALTY":
-                if ref_cmd_team != self.team_color:
+                if ref_cmd_team != self.team_color:  # Opponent penalty
                     penalty_spot_y = self._get_penalty_spot(for_us_to_attack=False)[1]
                     target_y = ball_pos[1] if ball_pos else penalty_spot_y
                     target_y = max(
@@ -778,18 +888,20 @@ class GoalkeeperStateMachine(RobotStateMachine):
         self._process_movement(current_pos)
 
     def _is_ball_threatening(self, ball_pos: Tuple[float, float]) -> bool:
+        """Verifica se a bola está no terço defensivo do campo, representando uma ameaça."""
         defensive_third_x = self.own_goal_line_x + (
             (self.field_bounds["x_max"] - self.field_bounds["x_min"])
             / 3.0
             * self.attack_direction_x_sign
         )
-        if self.attack_direction_x_sign == 1:
+        if self.attack_direction_x_sign == 1:  # Ataca para a direita (gol à esquerda)
             return ball_pos[0] < defensive_third_x
-        return ball_pos[0] > defensive_third_x
+        return ball_pos[0] > defensive_third_x  # Ataca para a esquerda (gol à direita)
 
     def _calculate_blocking_position(
         self, ball_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula a melhor posição na linha do gol para bloquear um chute, seguindo a coordenada Y da bola."""
         target_y = max(
             -self.goal_half_width + 0.05, min(self.goal_half_width - 0.05, ball_pos[1])
         )
@@ -801,6 +913,7 @@ class GoalkeeperStateMachine(RobotStateMachine):
     def _calculate_ball_approach_for_kick(
         self, ball_pos: Tuple[float, float], kick_target_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula a posição de aproximação da bola para um chute."""
         offset_dist = 0.15
         opponent_goal_center_x = -self.own_goal_line_x
         dx, dy = opponent_goal_center_x - ball_pos[0], 0.0 - ball_pos[1]
@@ -817,7 +930,13 @@ class GoalkeeperStateMachine(RobotStateMachine):
 
 
 class DefenderStateMachine(RobotStateMachine):
+    """
+    Máquina de estados especializada para o zagueiro.
+    Atua principalmente no campo de defesa, interceptando a bola e apoiando o meio-campo.
+    """
+
     def __init__(self, robot_id: int, team_color: str, game: Any):
+        """Inicializa a FSM do zagueiro."""
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.DEFENDER
         self.logger = get_logger(f"robot_behavior.defender.{self.robot_id}")
@@ -828,6 +947,7 @@ class DefenderStateMachine(RobotStateMachine):
         )
 
     def _update_home_position(self):
+        """Calcula a posição inicial (home) do zagueiro no primeiro quarto do campo."""
         super()._update_geometry_references()
         home_x = self.own_goal_line_x + (
             (self.field_bounds["x_max"] - self.field_bounds["x_min"])
@@ -845,7 +965,9 @@ class DefenderStateMachine(RobotStateMachine):
         current_pos: Tuple[float, float],
         game_command: str,
     ):
-        self.debug_robot_state(vision_data, referee_data)
+        """Lógica de decisão principal para o zagueiro."""
+        if DEBUG_ROBOT_BEHAVIOR and self.robot_id == 1:
+            self.debug_robot_state(vision_data, referee_data)
         self._update_home_position()
         ball_pos = self._get_ball_pos(vision_data)
         base_ref_cmd = self.last_game_command_from_referee.replace("_BLUE", "").replace(
@@ -930,11 +1052,13 @@ class DefenderStateMachine(RobotStateMachine):
         self._process_movement(current_pos)
 
     def _is_ball_in_our_half(self, ball_pos: Tuple[float, float]) -> bool:
+        """Verifica se a bola está na metade do campo da nossa equipe."""
         return (ball_pos[0] * self.attack_direction_x_sign) < (0.0 + OWN_HALF_X_OFFSET)
 
     def _calculate_intercept_or_block_position(
         self, ball_pos: Tuple[float, float], current_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula uma posição defensiva entre a bola e o gol."""
         target_x = ball_pos[0] * 0.4 + self.own_goal_line_x * 0.6
         target_y = ball_pos[1] * 0.6
         min_x_from_goal = (
@@ -950,6 +1074,7 @@ class DefenderStateMachine(RobotStateMachine):
     def _calculate_midfield_holding_position(
         self, ball_pos: Tuple[float, float], current_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula uma posição de espera no meio-campo para apoiar o ataque."""
         target_x = (OWN_HALF_X_OFFSET * 2.0) * self.attack_direction_x_sign
         target_y = ball_pos[1] * 0.3
         return self._enforce_field_boundaries((target_x, target_y))
@@ -957,6 +1082,7 @@ class DefenderStateMachine(RobotStateMachine):
     def _calculate_defensive_wall_position(
         self, ball_pos: Tuple[float, float], current_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula a posição para formar uma barreira em cobranças de falta adversárias."""
         dist_from_ball = DEFENDER_DISTANCE_FROM_BALL_OPPONENT_KICK + 0.05
         angle_ball_to_our_goal = math.atan2(
             0.1 - ball_pos[1], self.own_goal_line_x - ball_pos[0]
@@ -968,6 +1094,7 @@ class DefenderStateMachine(RobotStateMachine):
     def _calculate_support_position_our_set_piece(
         self, ball_pos: Optional[Tuple[float, float]], current_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula uma posição de apoio durante uma cobrança de falta da nossa equipe."""
         if ball_pos:
             target_x = ball_pos[0] - 1.2 * self.attack_direction_x_sign
             target_y = ball_pos[1] + (0.8 if self.robot_id % 2 != 0 else -0.8)
@@ -976,7 +1103,13 @@ class DefenderStateMachine(RobotStateMachine):
 
 
 class AttackerStateMachine(RobotStateMachine):
+    """
+    Máquina de estados especializada para o atacante.
+    Focada em buscar a bola, se posicionar para chutar e marcar gols.
+    """
+
     def __init__(self, robot_id: int, team_color: str, game: Any):
+        """Inicializa a FSM do atacante."""
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.ATTACKER
         self.logger = get_logger(f"robot_behavior.attacker.{self.robot_id}")
@@ -988,6 +1121,7 @@ class AttackerStateMachine(RobotStateMachine):
         )
 
     def _update_home_position(self):
+        """Calcula a posição inicial (home) do atacante, ligeiramente no campo adversário."""
         super()._update_geometry_references()
         home_x = (
             (self.field_bounds["x_max"] - self.field_bounds["x_min"])
@@ -1006,7 +1140,9 @@ class AttackerStateMachine(RobotStateMachine):
         current_pos: Tuple[float, float],
         game_command: str,
     ):
-        self.debug_robot_state(vision_data, referee_data)
+        """Lógica de decisão principal para o atacante."""
+        if DEBUG_ROBOT_BEHAVIOR and self.robot_id == 2:
+            self.debug_robot_state(vision_data, referee_data)
         self._update_home_position()
         ball_pos = self._get_ball_pos(vision_data)
         base_ref_cmd = self.last_game_command_from_referee.replace("_BLUE", "").replace(
@@ -1116,10 +1252,7 @@ class AttackerStateMachine(RobotStateMachine):
             self.has_ball = False
         else:
             dist_to_ball = self._distance(current_pos, ball_pos)
-            if dist_to_ball < ATTACKER_BALL_OWNERSHIP_THRESHOLD:
-                self.has_ball = True
-            else:
-                self.has_ball = False
+            self.has_ball = dist_to_ball < ATTACKER_BALL_OWNERSHIP_THRESHOLD
 
             if self.has_ball:
                 self.current_state = RobotState.ATTACKING
@@ -1197,6 +1330,7 @@ class AttackerStateMachine(RobotStateMachine):
         ball_pos: Tuple[float, float],
         vision_data: Dict,
     ) -> bool:
+        """Verifica se este robô é o companheiro de equipe mais próximo da bola."""
         my_dist = self._distance(my_pos, ball_pos)
         team_key = "robotsBlue" if self.team_color == "blue" else "robotsYellow"
         for r_id_str, r_data in vision_data.get(team_key, {}).items():
@@ -1213,6 +1347,7 @@ class AttackerStateMachine(RobotStateMachine):
         vision_data: Dict,
         current_pos: Tuple[float, float],
     ) -> Tuple[float, float]:
+        """Calcula uma posição de apoio ofensivo, se posicionando para receber um passe ou um rebote."""
         opp_goal_x, opp_goal_y = (-self.own_goal_line_x, 0.0)
         dir_ball_goal_x, dir_ball_goal_y = (
             opp_goal_x - ball_pos[0],
@@ -1239,6 +1374,7 @@ class AttackerStateMachine(RobotStateMachine):
     def _calculate_ball_approach_for_kick(
         self, ball_pos: Tuple[float, float], kick_target_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
+        """Calcula a posição ideal para se aproximar da bola, alinhado com o alvo do chute."""
         offset_dist = ATTACKER_BALL_OWNERSHIP_THRESHOLD * 0.8
         dx, dy = kick_target_pos[0] - ball_pos[0], kick_target_pos[1] - ball_pos[1]
         norm = self._distance((0, 0), (dx, dy))
