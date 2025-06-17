@@ -16,18 +16,20 @@
 
 O **UnBall SSL Client** é um sistema modular para controle de robôs na **RoboCup Small Size League (SSL)**. O projeto implementa uma arquitetura baseada em threads para comunicação em tempo real com:
 
-- 🎥 **SSL-Vision**: Recebe e processa dados de visão (posições de robôs, bola, geometria do campo).
-- 🎮 **SSL Game Controller**: Manipula comandos do árbitro e o estado do jogo.
-- 🤖 **Controle de Robôs**: Gerencia ações de robôs via simulação (grSim) ou interfaces para robôs reais (IRL).
-- 🧠 **Lógica Comportamental**: Implementa máquinas de estado para diferentes papéis de robôs (Goleiro, Defensor, Atacante).
-- 🗺️ **Planejamento de Trajetória**: Utiliza o algoritmo A* para navegação de robôs e desvio de obstáculos.
-- 🖥️ **Interface Gráfica**: GUI baseada em PyQt5 para visualização em tempo real, controle e depuração.
+- 🎥 **SSL-Vision**: Recebe e processa dados de visão (posições de robôs, bola, geometria do campo)
+- 🎮 **SSL Game Controller**: Manipula comandos do árbitro e o estado do jogo
+- 🤖 **Controle de Robôs**: Gerencia ações de robôs via simulação (grSim) ou interfaces para robôs reais (IRL)
+- 🧠 **Lógica Comportamental**: Implementa máquinas de estado para diferentes papéis de robôs (Goleiro, Defensor, Atacante)
+- 🗺️ **Planejamento de Trajetória**: Utiliza o algoritmo A* para navegação de robôs e desvio de obstáculos
+- 🖥️ **Interface Gráfica**: GUI baseada em PyQt5 para visualização em tempo real, controle e depuração
+- 📊 **Sistema de Logging**: Sistema centralizado de logs com níveis configuráveis para debug eficiente
+- 🐛 **Utilitários de Debug**: Ferramentas avançadas para análise de performance e comportamento
 
 ## 📦 Dependências e Instalação
 
 Este projeto é compatível com **Python 3.10.12**.
 
-Para criar um ambiente virtual e instalar as dependências, execute:
+Para criar um ambiente virtual e instalar as dependências:
 
 ```bash
 python3.10 -m venv env
@@ -44,19 +46,14 @@ sudo apt-get install qttools5-dev
 
 ## 🏗️ Arquitetura do Sistema
 
-<!--
-The following diagram is in Mermaid syntax. 
-If your Markdown renderer does not support Mermaid, please use a tool like https://mermaid.live/ to view it.
--->
-
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           ENTRADA DE DADOS                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  SSL-Vision ──┐                                                            │
+│  SSL-Vision ──┐                                                             │
 │               │ UDP Multicast                                               │
-│  SSL Game     ├──────────────► Game Logic (Main Loop)                      │
-│  Controller ──┘                        │                                   │
+│  SSL Game     ├──────────────► Game Logic (Main Loop)                       │
+│  Controller ──┘                        │                                    │
 │                                         │                                   │
 │  config.json ───────────────────────────┘                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -65,39 +62,43 @@ If your Markdown renderer does not support Mermaid, please use a tool like https
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                      PROCESSAMENTO CENTRAL                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  Robot State Machines (RobotBehavior)                                      │
+│  Robot State Machines (RobotBehavior)                                       │
 │                        │                                                    │
 │                        ▼                                                    │
-│  Path Planner (PathPlanning - A*)                                         │
+│  Path Planner (PathPlanning - A*)                                           │
 │                        │                                                    │
 │                        ▼                                                    │
-│  Robot Controllers (RobotBehavior - GrSim/IRL)                            │
+│  Robot Controllers (RobotBehavior - GrSim/IRL)                              │
+│                        │                                                    │
+│                        ▼                                                    │
+│  Logger & Debug Utils (utils/)                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
                      │
                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                      SAÍDA E INTERAÇÃO                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  Robot Controllers ──┬──► grSim Simulator                                  │
-│                      │                                                     │
-│                      └──► Robôs Reais (IRL)                               │
+│  Robot Controllers ──┬──► grSim Simulator                                   │
+│                      │                                                      │
+│                      └──► Robôs Reais (IRL)                                 │
 │                                                                             │
-│  Game Logic ─────────────► Interface Gráfica (PyQt)                       │
+│  Game Logic ─────────────► Interface Gráfica (PyQt)                         │
+│                      │                                                      │
+│  Logger ─────────────┴──► Arquivos de Log / Console                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Threads do Sistema
 
-**Fluxo de Dados:**
+O sistema utiliza múltiplas threads para garantir processamento em tempo real:
 
-- SSL-Vision e SSL Game Controller transmitem pacotes via multicast UDP.
-- VisionClient e GameController capturam e processam esses pacotes.
-- A classe principal `Game` (em main.py) orquestra o fluxo, recebendo os dados processados.
-- Máquinas de estado dos robôs usam dados de visão e árbitro para decidir ações.
-- O planejador de trajetória (A*) calcula rotas considerando obstáculos.
-- Controladores de robôs traduzem comandos para grSim ou robôs reais.
-- A interface PyQt fornece visualização, controle manual e depuração.
+1. **Thread Principal (Game)**: Loop principal a 60 FPS
+2. **Thread Vision**: Recebe pacotes UDP do SSL-Vision
+3. **Thread GameController**: Recebe comandos do árbitro
+4. **Thread UI (PyQt)**: Interface gráfica responsiva
+5. **Threads de Controle**: Uma thread por robô para envio de comandos
 
-A configuração principal é gerenciada através do arquivo config.json localizado na raiz do projeto. Se este arquivo não for encontrado, uma configuração padrão será criada. As configurações de rede podem ser modificadas em tempo de execução através da UI (Menu > Configurações > Configurar IPS).
+**Sincronização**: Utiliza `threading.Lock()` para acesso seguro aos dados compartilhados.
 
 ### Exemplo config.json
 
@@ -133,117 +134,270 @@ A configuração principal é gerenciada através do arquivo config.json localiz
     "path_planning": true,
     "robot_behavior": true,
     "all": false
+  },
+  "logging": {
+    "level": "INFO",
+    "file_output": true,
+    "console_output": true,
+    "max_file_size": "10MB",
+    "backup_count": 5
   }
 }
 ```
-
-### Divisões Suportadas
-
-O cliente suporta diferentes divisões da SSL, com configurações específicas para dimensões de campo, número de robôs e papéis padrão (definidas em `FIELD_DIMENSIONS_BY_DIVISION` em main.py):
-
-| Divisão      | Campo (LxA)    | Robôs/time | Papéis Padrão                |
-|--------------|---------------|------------|------------------------------|
-| Entry Level  | 4.5m × 3.0m   | 3          | {0: GOLEIRO, 1: DEFENSOR, 2: ATACANTE} |
-| Division B   | 9.0m × 6.0m   | 6          | {0: GOLEIRO, 1: DEFENSOR, 2: ATACANTE, ...} |
-| Division A   | 12.0m × 9.0m  | 11         | {0: GOLEIRO, 1: DEFENSOR, 2: DEFENSOR, ...} |
-
-A seleção da divisão na UI atualiza a visualização do campo e o número de robôs.
 
 ## 🧩 Componentes Detalhados
 
 ### 1. main.py - Núcleo do Sistema
 
 - **Classe Principal:** `Game`
-- **Responsabilidade:** Coordena visão, árbitro, controle de robôs, planejamento de trajetória e UI.
-- **Destaques:** Loop principal a 60 FPS, gerenciamento de configuração, inicialização dinâmica de robôs, manipulação de comandos do árbitro e UI.
+- **Responsabilidade:** Coordena visão, árbitro, controle de robôs, planejamento de trajetória e UI
+- **Destaques:** 
+  - Loop principal a 60 FPS
+  - Gerenciamento de configuração
+  - Inicialização dinâmica de robôs
+  - Manipulação de comandos do árbitro
+  - Sistema de logging integrado
 
-### 2. VisionClient - Processamento de Visão
+### 2. Sistema de Logging (utils/logger.py)
 
-- **Arquivo:** VisionClient/Vision.py
-- **Classe:** Vision (threading.Thread)
-- **Função:** Recebe e processa pacotes do SSL-Vision, atualizando posições de robôs e bola.
+- **Função:** Sistema centralizado de logging com níveis configuráveis
+- **Características:**
+  - Níveis: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  - Output para console e arquivo
+  - Rotação automática de logs
+  - Formatação consistente com timestamps
+  
+**Uso:**
+```python
+from utils.logger import get_logger
 
-### 3. GameController - Comunicação com Árbitro
+logger = get_logger("module_name")
+logger.debug("Mensagem de debug")
+logger.info("Informação importante")
+logger.error("Erro ocorreu", exc_info=True)
+```
 
-- **Arquivo:** GameController/GameController.py
-- **Classe:** GameController (threading.Thread)
-- **Função:** Recebe comandos do árbitro, atualiza estado do jogo.
+### 3. Utilitários de Debug (utils/debug_utils.py)
 
-### 4. RobotBehavior - Comportamentos dos Robôs
-
-- **Arquivos:** robot_states.py, robot_state_machine.py
-- **Função:** Define estados e papéis dos robôs (GOLEIRO, DEFENSOR, ATACANTE), lógica de transição de estados.
-
-### 5. PathPlanning - Planejamento de Trajetória
-
-- **Arquivos:** path_planner.py, astar.py
-- **Função:** Algoritmo A* para navegação, desvio de obstáculos, suavização de trajetórias.
-
-### 6. SimulationGrSim / RobotBehavior (Controladores)
-
-- **Função:** Controladores para simulação (grSim) e robôs reais (IRL).
-
-### 7. PyQt Interface - Interface Gráfica
-
-- **Arquivos:** ssl_client.py, field_visualization.py
-- **Função:** Visualização do campo, controle manual, depuração.
+- **Performance Monitor**: Análise de tempo de execução
+- **Memory Profiler**: Monitoramento de uso de memória
+- **Thread Monitor**: Visualização de threads ativas
+- **Data Inspector**: Inspeção de estruturas de dados em tempo real
 
 ## 🎮 Como Usar
 
 ### Interface Gráfica
 
-- **Seleção de Time:** Escolha entre "Time Azul" ou "Time Amarelo" (comboBox).
-- **Seleção de Divisão:** Selecione "Entry Level", "Division B", ou "Division A" (division_combo).
-- **Modo de Controle:** Escolha entre "grSim" (simulação) ou "IRL" (robôs reais).
-- **Comandos do Árbitro:** Use botões como "HALT", "STOP", "FORCE START" para enviar comandos de jogo.
-- **Visualização:** O campo central mostra posições em tempo real dos robôs e da bola. Opções para alternar visibilidade dos times e visualizar trajetórias A*.
-- **Status dos Robôs:** Exibe papel e estado atual de cada robô.
-- **Seleção de Estado do Jogo:** Permite forçar o sistema a um estado de jogo específico.
+#### Controles Principais
+- **Seleção de Time:** Escolha entre "Time Azul" ou "Time Amarelo"
+- **Seleção de Divisão:** "Entry Level", "Division B", ou "Division A"
+- **Modo de Controle:** "grSim" (simulação) ou "IRL" (robôs reais)
+
+#### Comandos de Jogo
+- **Comandos Básicos:** HALT, STOP, FORCE START
+- **Situações de Jogo:** (Em desenvolvimento)
+  - FREE-KICK POSITION
+  - KICK-OFF
+  - PENALTY
+  - GOAL KICK
+  - CORNER KICK
+  - BALL PLACEMENT
+
+#### Visualização e Debug
+- **Campo Central:** Posições em tempo real dos robôs e bola
+- **Trajetórias A*:** Visualização de caminhos planejados
+- **Status dos Robôs:** Papel e estado atual
+- **Console de Debug:** Logs em tempo real (Menu > Debug)
 
 ### Comandos via Terminal
 
-Para executar testes ou utilitários:
-
 ```bash
+# Executar o cliente principal
+python main.py
+
+# Testes específicos
 python -m tests.integration.test_behavior
 python -m tests.system.test_cli --role goalkeeper --duration 30
+
+# Debug com níveis específicos
+LOG_LEVEL=DEBUG python main.py
+
+# Análise de performance
+python -m utils.performance_analyzer
 ```
-
-## 🧪 Testes e Qualidade
-
-Consulte `tests/tests.md` para comandos de execução de testes.
-
-Exemplo:
-
-```bash
-python -m unittest discover tests/unit
-python -m tests.integration.test_behavior
-```
-
-## 🐛 Debug e Monitoramento
-
-- **Logs:** Utiliza o módulo logging do Python. Ative logs detalhados via `GAME_DEBUG = True` em main.py ou flags em config.json.
-- **Interface de Debug:** Menu > Configurações > Debug.
-- **Visualizar A\*:** Caixa de seleção na UI principal.
 
 ## 🤖 Sistema de IA e Comportamentos
 
-Cada robô utiliza uma máquina de estados para determinar seu comportamento. Principais estados:
+### Estados dos Robôs
 
-- IDLE: Robô parado.
-- MOVING_TO_POSITION: Movendo-se para um alvo.
-- RETURNING: Retornando à posição inicial.
-- AVOIDING_BALL: Afastando-se da bola.
-- MOVING_TO_BALL: Indo em direção à bola.
-- BALL_PLACEMENT_ACTIVE / BALL_PLACEMENT_AVOIDING: Lidando com posicionamento de bola.
+Cada robô utiliza uma máquina de estados finitos (FSM):
 
-## 🔗 Recursos Relacionados
+#### Estados Básicos
+- **IDLE**: Robô parado
+- **MOVING_TO_POSITION**: Movendo-se para um alvo
+- **RETURNING**: Retornando à posição inicial
 
-O UnBall SSL Client integra-se com diversas ferramentas e protocolos do ecossistema RoboCup SSL:
+#### Estados Específicos por Papel
 
-- [ssl-vision](https://github.com/RoboCup-SSL/ssl-vision): Sistema de visão para rastreamento de robôs e bola.
-- [ssl-game-controller](https://github.com/RoboCup-SSL/ssl-game-controller): Controlador de partidas e árbitro.
-- [ssl-simulation-protocol](https://github.com/RoboCup-SSL/ssl-simulation-protocol): Protocolo de simulação.
-- [ssl-simulation-setup](https://github.com/RoboCup-SSL/ssl-simulation-setup): Ferramentas de configuração de simulação.
-- [grSim](https://github.com/RoboCup-SSL/grSim): Simulador de jogos SSL.
-- [erForceSim](https://github.com/robotics-erlangen/framework): Framework de simulação alternativo.
+**Atacante:**
+- **MOVING_TO_BALL**: Indo em direção à bola
+- **APPROACHING_BALL**: Aproximação final (em desenvolvimento)
+- **ALIGNING_TO_GOAL**: Alinhamento para chute (em desenvolvimento)
+- **KICKING**: Executando chute
+
+**Goleiro:**
+- **DEFENDING_GOAL**: Posicionamento defensivo
+- **INTERCEPTING**: Tentando interceptar a bola
+- **CLEARING_BALL**: Afastando a bola da área
+
+**Defensor:**
+- **MARKING**: Marcando adversário
+- **BLOCKING**: Bloqueando linha de passe
+- **SUPPORTING**: Apoiando o ataque
+
+### Sistema de Planejamento (A*)
+
+O planejador de trajetória considera:
+- Obstáculos estáticos (limites do campo)
+- Obstáculos dinâmicos (outros robôs)
+- Zonas proibidas (área do goleiro adversário)
+- Otimização de caminho (suavização de curvas)
+
+## 🐛 Debug e Monitoramento
+
+### Níveis de Log
+
+```python
+# Em config.json
+"logging": {
+  "level": "DEBUG",  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  "modules": {
+    "vision": "INFO",
+    "path_planning": "DEBUG",
+    "robot_behavior": "DEBUG"
+  }
+}
+```
+
+### Ferramentas de Debug
+
+1. **Performance Profiler**
+   ```bash
+   python -m utils.profiler --module path_planning
+   ```
+
+2. **Thread Monitor**
+   ```bash
+   python -m utils.thread_monitor
+   ```
+
+3. **Data Flow Analyzer**
+   ```bash
+   python -m utils.data_flow_analyzer
+   ```
+
+## 🧪 Testes
+
+### Estrutura de Testes
+
+```
+tests/
+├── unit/           # Testes unitários
+├── integration/    # Testes de integração
+├── system/        # Testes de sistema
+└── performance/   # Testes de performance
+```
+
+### Executar Testes
+
+```bash
+# Todos os testes
+python -m pytest
+
+# Testes específicos
+python -m pytest tests/unit/test_path_planning.py
+python -m pytest tests/integration/test_robot_behavior.py -v
+
+# Com cobertura
+python -m pytest --cov=. --cov-report=html
+```
+
+## 📚 Recursos de Aprendizado
+
+### Para Iniciantes em RoboCup SSL
+
+1. **Documentação Oficial SSL**
+   - [SSL Rules](https://ssl.robocup.org/rules/)
+   - [SSL Vision Protocol](https://github.com/RoboCup-SSL/ssl-vision/wiki)
+
+2. **Artigos Recomendados**
+   - "Multi-Robot Path Planning in Dynamic Environments" (2023)
+   - "Coordinated Team Play in Robot Soccer" (2022)
+   - "Real-time Motion Planning for SSL Robots" (2021)
+
+3. **Conceitos Importantes**
+   - **Threads em Python**: `threading` vs `multiprocessing`
+   - **Comunicação UDP**: Sockets e multicast
+   - **Máquinas de Estado**: Design patterns para robótica
+   - **Algoritmo A***: Pathfinding em grids
+
+### Dicas de Desenvolvimento
+
+1. **Use o Logger, não print()**
+   ```python
+   # ❌ Evite
+   print(f"Debug: {value}")
+   
+   # ✅ Prefira
+   self.logger.debug(f"Value: {value}")
+   ```
+
+2. **Thread Safety**
+   ```python
+   with self.data_lock:
+       # Acesso seguro a dados compartilhados
+       self.shared_data = new_value
+   ```
+
+3. **Tratamento de Exceções**
+   ```python
+   try:
+       risky_operation()
+   except SpecificException as e:
+       self.logger.error(f"Erro específico: {e}", exc_info=True)
+   ```
+
+## 🚧 Status de Desenvolvimento
+
+### ✅ Implementado
+- Sistema base de visão e controle
+- Planejamento de trajetória A*
+- Interface gráfica básica
+- Sistema de logging
+- Estrutura de máquinas de estado
+
+### 🔄 Em Desenvolvimento
+- Melhorias na aproximação da bola
+- Lógica avançada do goleiro
+- Comportamento defensivo inteligente
+- Botões de situações de jogo na UI
+
+### 📋 Planejado
+- Sistema de táticas coletivas
+- Machine Learning para predição
+- Análise pós-jogo
+- Modo de treinamento
+
+## 🤝 Contribuindo
+
+1. Fork o projeto
+2. Crie sua feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add: AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
+
+## Suporte
+
+- **Issues**: Use o GitHub Issues para reportar bugs
+- **Discussões**: GitHub Discussions para dúvidas
+- **Email**: unball@unb.br
