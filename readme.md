@@ -49,32 +49,43 @@ The following diagram is in Mermaid syntax.
 If your Markdown renderer does not support Mermaid, please use a tool like https://mermaid.live/ to view it.
 -->
 
-```mermaid
-graph TB
-  subgraph "Entrada de Dados"
-    A[SSL-Vision] -- UDP Multicast --> D(Game Logic - Main Loop)
-    B[SSL Game Controller] -- UDP Multicast --> D
-    C[Configurações (config.json)] --> D
-  end
-
-  subgraph "Processamento Central"
-    D --> E[Robot State Machines (RobotBehavior)]
-    E --> F[Path Planner (PathPlanning - A*)]
-    F --> G[Robot Controllers (RobotBehavior - GrSim/IRL)]
-  end
-
-  subgraph "Saída e Interação"
-    G --> H[grSim Simulator]
-    G --> I[Robôs Reais (IRL)]
-    D --> J[Interface Gráfica (PyQt)]
-  end
-
-  style D fill:#f9f,stroke:#333,stroke-width:2px
-  style E fill:#ccf,stroke:#333,stroke-width:2px
-  style F fill:#cfc,stroke:#333,stroke-width:2px
-  style G fill:#ffc,stroke:#333,stroke-width:2px
-  style J fill:#fcc,stroke:#333,stroke-width:2px
 ```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ENTRADA DE DADOS                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  SSL-Vision ──┐                                                            │
+│               │ UDP Multicast                                               │
+│  SSL Game     ├──────────────► Game Logic (Main Loop)                      │
+│  Controller ──┘                        │                                   │
+│                                         │                                   │
+│  config.json ───────────────────────────┘                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      PROCESSAMENTO CENTRAL                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Robot State Machines (RobotBehavior)                                      │
+│                        │                                                    │
+│                        ▼                                                    │
+│  Path Planner (PathPlanning - A*)                                         │
+│                        │                                                    │
+│                        ▼                                                    │
+│  Robot Controllers (RobotBehavior - GrSim/IRL)                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      SAÍDA E INTERAÇÃO                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Robot Controllers ──┬──► grSim Simulator                                  │
+│                      │                                                     │
+│                      └──► Robôs Reais (IRL)                               │
+│                                                                             │
+│  Game Logic ─────────────► Interface Gráfica (PyQt)                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 
 **Fluxo de Dados:**
 
