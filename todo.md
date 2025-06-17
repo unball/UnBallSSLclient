@@ -46,6 +46,7 @@ todo:
     - conectar os botões da interface que atualmente não possuem funcionalidade
     - arquivos-alvo: `PyQt/ssl_client.py`
     - prioridade: alta
+- o a* tá considerando os robôs amarelos na hora do chute? o a* está considerando os robôs no path pllaning? 
 
 # importante mas nem tanto
 
