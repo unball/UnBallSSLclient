@@ -65,3 +65,4 @@ todo:
 - mudar o tamanho da janela de acordo com o botão maximizar
 - corrigir outras abas (debug e posicionamento)
 - IRL
+- Quando muda a resolução o pyqt não faz update conforme o necessário
