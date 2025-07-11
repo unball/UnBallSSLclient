@@ -2,3 +2,5 @@ protobuf==3.20.3 #ou será se é 3.12.4 #os dois funfam
 PyQt5
 pyqt5-tools
 matplotlib
+ortools
+seaborn

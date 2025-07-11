@@ -5,6 +5,18 @@ from typing import Tuple, Dict, Optional, List, Any
 from .robot_states import RobotState, RobotRole
 from utils.logger import get_logger
 
+try:
+    from GoalkeeperOptimization.goalkeeper_optimizer_simple import (
+        SimpleGoalkeeperOptimizer,
+    )
+
+    SIMPLE_OPTIMIZER_AVAILABLE = True
+    print("SimpleGoalkeeperOptimizer imported successfully")
+except ImportError as e:
+    SIMPLE_OPTIMIZER_AVAILABLE = False
+    print(f"SimpleGoalkeeperOptimizer not available: {e}")
+    exit()
+
 # --- Constantes para Ajuste de Comportamento e Regras da SSL-EL ---
 DEBUG_ROBOT_BEHAVIOR = False
 
@@ -775,6 +787,15 @@ class RobotStateMachine:
         self.logger.debug(f"LastRefCMDseen: {self.last_game_command_from_referee}")
         self.logger.debug(f"------------------------------------")
 
+        if hasattr(self, "optimization_stats") and self.optimization_stats["calls"] > 0:
+            stats = self.optimization_stats
+            success_rate = (
+                stats["successes"] / stats["calls"] * 100 if stats["calls"] > 0 else 0
+            )
+            self.logger.debug(
+                f"Optimization: {stats['calls']} calls, {success_rate:.1f}% success"
+            )
+
 
 class GoalkeeperStateMachine(RobotStateMachine):
     """
@@ -784,12 +805,33 @@ class GoalkeeperStateMachine(RobotStateMachine):
     """
 
     def __init__(self, robot_id: int, team_color: str, game: Any):
-        """Inicializa a FSM do goleiro."""
+        """Inicializa a FSM do goleiro com otimização opcional."""
         super().__init__(robot_id, team_color, game)
         self.role = RobotRole.GOALKEEPER
         self.logger = get_logger(f"robot_behavior.goalkeeper.{self.robot_id}")
         self._update_home_position()
         self.target_position = self.home_position
+
+        self.use_optimization = True  # Flag para ativar/desativar
+        self.optimizer = None
+        self.optimization_stats = {
+            "calls": 0,
+            "successes": 0,
+            "failures": 0,
+            "total_time_ms": 0.0,
+        }
+
+        # Inicializar otimizador se disponível
+        if SIMPLE_OPTIMIZER_AVAILABLE and self.use_optimization:
+            try:
+                self.optimizer = SimpleGoalkeeperOptimizer()
+                self.logger.info(f"🎯 GK {self.robot_id}: OPTIMIZATION ENABLED")
+            except Exception as e:
+                self.logger.warning(f"GK {self.robot_id}: Optimizer init failed: {e}")
+                self.optimizer = None
+        else:
+            self.logger.info(f"📋 GK {self.robot_id}: Using ORIGINAL method")
+
         self.logger.info(
             f"GK {self.robot_id} ({self.team_color}) Initialized. Home: {self.home_position}"
         )
@@ -848,7 +890,7 @@ class GoalkeeperStateMachine(RobotStateMachine):
                     self.target_position = self.home_position
             else:
                 self.target_position = self.home_position
-            self._process_movement(current_pos)
+            self._process_movement_with_orientation(current_pos)
             return
 
         if (
@@ -873,7 +915,7 @@ class GoalkeeperStateMachine(RobotStateMachine):
             else:
                 self.current_state = RobotState.RETURNING
                 self.target_position = self.home_position
-            self._process_movement(current_pos)
+            self._process_movement_with_orientation(current_pos)
             return
 
         if not ball_pos:
@@ -885,7 +927,7 @@ class GoalkeeperStateMachine(RobotStateMachine):
         else:
             self.current_state = RobotState.RETURNING
             self.target_position = self.home_position
-        self._process_movement(current_pos)
+        self._process_movement_with_orientation(current_pos)
 
     def _is_ball_threatening(self, ball_pos: Tuple[float, float]) -> bool:
         """Verifica se a bola está no terço defensivo do campo, representando uma ameaça."""
@@ -901,7 +943,291 @@ class GoalkeeperStateMachine(RobotStateMachine):
     def _calculate_blocking_position(
         self, ball_pos: Tuple[float, float]
     ) -> Tuple[float, float]:
-        """Calcula a melhor posição na linha do gol para bloquear um chute, seguindo a coordenada Y da bola."""
+        """
+        Calcula a melhor posição na linha do gol para bloquear um chute.
+        VERSÃO OTIMIZADA: Usa SimpleGoalkeeperOptimizer quando disponível.
+        """
+        import time
+
+        start_time = time.time()
+        self.optimization_stats["calls"] += 1
+
+        # Tentar usar otimização
+        if self.optimizer and self.use_optimization:
+            try:
+                optimal_pos = self.optimizer.calculate_optimal_position(ball_pos)
+                self.optimization_stats["successes"] += 1
+
+                # Calcular tempo
+                solve_time = (time.time() - start_time) * 1000
+                self.optimization_stats["total_time_ms"] += solve_time
+
+                # Log de comparação detalhado se debug ativo
+                if DEBUG_ROBOT_BEHAVIOR:
+                    original_pos = self._calculate_blocking_position_original(ball_pos)
+                    distance = math.sqrt(
+                        (optimal_pos[0] - original_pos[0]) ** 2
+                        + (optimal_pos[1] - original_pos[1]) ** 2
+                    )
+                    self.logger.debug(
+                        f"GK {self.robot_id}: Ball({ball_pos[0]:.2f},{ball_pos[1]:.2f}) -> "
+                        f"OPTIMIZED({optimal_pos[0]:.2f},{optimal_pos[1]:.2f}) vs "
+                        f"ORIGINAL({original_pos[0]:.2f},{original_pos[1]:.2f}) "
+                        f"[diff: {distance:.3f}m, time: {solve_time:.1f}ms]"
+                    )
+
+                return optimal_pos
+
+            except Exception as e:
+                self.optimization_stats["failures"] += 1
+                self.logger.warning(f"GK {self.robot_id}: Optimization failed: {e}")
+
+        # Fallback para método original
+        return self._calculate_blocking_position_original(ball_pos)
+
+    def _process_movement_with_orientation(
+        self,
+        current_pos: Tuple[float, float],
+        max_speed_override: Optional[float] = None,
+    ):
+        """
+        Versão melhorada do processamento de movimento que inclui orientação.
+
+        ADICIONAR este método na classe GoalkeeperStateMachine.
+        MODIFICAR _decide_next_action para chamar este método em vez de _process_movement.
+        """
+        if self.target_position:
+            # Processar movimento normal
+            self._request_path_if_needed(current_pos, self.target_position)
+
+            # NOVO: Calcular orientação ideal se há bola visível
+            vision_data = self.game.get_vision_data()
+            ball_pos = self._get_ball_pos(vision_data) if vision_data else None
+
+            if ball_pos:
+                # Calcular orientação ideal
+                target_orientation = self._calculate_optimal_orientation(
+                    current_pos, ball_pos
+                )
+
+                # Seguir caminho com orientação específica
+                self._follow_path_with_orientation(
+                    current_pos, target_orientation, max_speed_override
+                )
+            else:
+                # Sem bola visível, movimento normal
+                self._follow_path(current_pos, max_speed_override)
+
+        elif self.current_state != RobotState.IDLE:
+            self.logger.warning(
+                f"Robot {self.robot_id}: No target, but not IDLE. Stopping."
+            )
+            self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
+            self.current_path = []
+
+    def _follow_path_with_orientation(
+        self,
+        current_pos: Tuple[float, float],
+        target_orientation: float,
+        max_speed_override: Optional[float] = None,
+    ):
+        """
+        Segue o caminho mantendo orientação específica para a bola.
+
+        ADICIONAR este método na classe GoalkeeperStateMachine.
+        """
+        current_orientation = self._get_current_orientation()
+        if current_orientation is None:
+            self.logger.warning(
+                f"Robot {self.robot_id}: No orientation for path following."
+            )
+            self.game.active_controller.send_global_velocity(self.robot_id, 0, 0, 0)
+            return
+
+        path = self.game.path_planner.get_path(self.robot_id)
+        if path and path != self.current_path:
+            self.current_path = path
+
+        if self.current_path:
+            lookahead = self.path_follower.get_target_point(
+                current_pos, self.current_path
+            )
+            self._move_to_point_with_orientation(
+                current_pos,
+                current_orientation,
+                lookahead,
+                target_orientation,
+                max_speed_override,
+            )
+
+            # Verificar se chegou ao destino
+            if (
+                self._distance(current_pos, self.current_path[-1]) < 0.01
+            ):  # FINE_TUNE_DISTANCE
+                self.logger.debug(
+                    f"Robot {self.robot_id}: Reached end of path segment."
+                )
+                if (
+                    self.target_position
+                    and self._distance(current_pos, self.target_position) < 0.01
+                ):
+
+                    self.logger.debug(
+                        f"Robot {self.robot_id}: Arrived at target {self.target_position}."
+                    )
+                    if self.current_state in [
+                        RobotState.MOVING_TO_POSITION,
+                        RobotState.RETURNING,
+                        RobotState.BLOCKING,
+                        RobotState.DEFENDING,
+                    ]:
+                        self.current_state = RobotState.IDLE
+                        # Manter orientação para a bola mesmo parado
+                        angular_vel = self._calculate_angular_velocity(
+                            current_orientation, target_orientation
+                        )
+                        self.game.active_controller.send_global_velocity(
+                            self.robot_id, 0, 0, angular_vel
+                        )
+
+                    self.target_position = None
+                    self.current_path = []
+
+        elif self.target_position:
+            self.logger.debug(
+                f"Robot {self.robot_id}: No path, direct move to {self.target_position}."
+            )
+            self._move_to_point_with_orientation(
+                current_pos,
+                current_orientation,
+                self.target_position,
+                target_orientation,
+                max_speed_override,
+            )
+
+        elif self.current_state != RobotState.IDLE:
+            self.logger.warning(
+                f"Robot {self.robot_id}: No path, no target, not IDLE. Stopping with orientation."
+            )
+            # Manter orientação mesmo parado
+            angular_vel = self._calculate_angular_velocity(
+                current_orientation, target_orientation
+            )
+            self.game.active_controller.send_global_velocity(
+                self.robot_id, 0, 0, angular_vel
+            )
+
+    def _move_to_point_with_orientation(
+        self,
+        current_pos: Tuple[float, float],
+        current_orientation: float,
+        target_point: Tuple[float, float],
+        target_orientation: float,
+        max_speed_override: Optional[float] = None,
+    ):
+        """
+        Move para um ponto mantendo orientação específica.
+        """
+        safe_target = self._enforce_field_boundaries(target_point)
+        dx, dy = safe_target[0] - current_pos[0], safe_target[1] - current_pos[1]
+        dist = self._distance((0, 0), (dx, dy))
+
+        # Calcular velocidade linear (igual ao método original)
+        max_speed = (
+            max_speed_override if max_speed_override is not None else 1.5
+        )  # ROBOT_MAX_LINEAR_SPEED
+        speed_factor = 1.0
+
+        if dist < 0.01:  # FINE_TUNE_DISTANCE
+            speed_factor = 0.0
+        elif dist < 0.4:  # APPROACH_SLOWDOWN_DISTANCE
+            min_sf = 0.1
+            speed_factor = min_sf + (dist - 0.01) / (0.4 - 0.01) * (1.0 - min_sf)
+            speed_factor = max(min_sf, min(1.0, speed_factor))
+
+        final_lin_speed = max_speed * speed_factor
+        vx, vy = (
+            (dx / dist * final_lin_speed) if dist > 0 else 0,
+            (dy / dist * final_lin_speed) if dist > 0 else 0,
+        )
+
+        # NOVO: Calcular velocidade angular para orientação
+        angular_vel = self._calculate_angular_velocity(
+            current_orientation, target_orientation
+        )
+
+        # Verificar limites do campo (igual ao método original)
+        field_bounds = self.field_bounds
+        if (current_pos[0] <= field_bounds["x_min"] + 0.02 and vx < 0) or (
+            current_pos[0] >= field_bounds["x_max"] - 0.02 and vx > 0
+        ):
+            vx = 0
+        if (current_pos[1] <= field_bounds["y_min"] + 0.02 and vy < 0) or (
+            current_pos[1] >= field_bounds["y_max"] - 0.02 and vy > 0
+        ):
+            vy = 0
+
+        # Enviar comando com orientação
+        if hasattr(self.game, "active_controller") and self.game.active_controller:
+            self.game.active_controller.send_command_with_kick(
+                self.robot_id, vx, vy, angular_vel, 0, 0, 0
+            )
+        else:
+            self.logger.error(f"R{self.robot_id} ERROR: No active_controller!")
+
+    def _calculate_angular_velocity(
+        self, current_orientation: float, target_orientation: float
+    ) -> float:
+        """
+        Calcula velocidade angular para atingir orientação desejada.
+
+        ADICIONAR este método na classe GoalkeeperStateMachine.
+        """
+        # Calcular erro angular
+        orient_err = self._normalize_angle(target_orientation - current_orientation)
+
+        # Controle proporcional para orientação
+        ang_p_gain = 4.0  # Ganho mais alto para resposta mais rápida
+        max_angular_speed = math.pi * 2.0  # Velocidade angular máxima
+
+        angular_vel = max(
+            -max_angular_speed, min(max_angular_speed, orient_err * ang_p_gain)
+        )
+
+        return angular_vel
+
+    def _calculate_optimal_orientation(
+        self, current_pos: Tuple[float, float], ball_pos: Tuple[float, float]
+    ) -> float:
+        """
+        Calcula a orientação ideal do goleiro para ficar sempre de frente para a bola.
+
+        Args:
+            current_pos: Posição atual do goleiro
+            ball_pos: Posição da bola
+
+        Returns:
+            Ângulo em radianos para o goleiro ficar de frente para a bola
+        """
+        # Calcular ângulo da posição atual para a bola
+        dx = ball_pos[0] - current_pos[0]
+        dy = ball_pos[1] - current_pos[1]
+
+        # Ângulo para a bola
+        angle_to_ball = math.atan2(dy, dx)
+
+        # Log para debug
+        if hasattr(self, "logger"):
+            self.logger.debug(
+                f"GK {self.robot_id}: Angle to ball: {math.degrees(angle_to_ball):.1f}°"
+            )
+
+        return angle_to_ball
+
+    def _calculate_blocking_position_original(
+        self, ball_pos: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        """Método original de cálculo (mantido como fallback)."""
         target_y = max(
             -self.goal_half_width + 0.05, min(self.goal_half_width - 0.05, ball_pos[1])
         )
@@ -909,6 +1235,23 @@ class GoalkeeperStateMachine(RobotStateMachine):
             GOALKEEPER_GOAL_LINE_X_OFFSET * self.attack_direction_x_sign
         )
         return (target_x, target_y)
+
+    def debug_optimization_stats(self):
+        """Mostra estatísticas de uso da otimização."""
+        stats = self.optimization_stats
+        if stats["calls"] > 0:
+            success_rate = stats["successes"] / stats["calls"] * 100
+            avg_time = (
+                stats["total_time_ms"] / stats["calls"] if stats["calls"] > 0 else 0
+            )
+
+            self.logger.info(
+                f"📊 GK {self.robot_id} Optimization Stats: "
+                f"{stats['calls']} calls, {success_rate:.1f}% success, "
+                f"{avg_time:.1f}ms avg, {stats['failures']} failures"
+            )
+        else:
+            self.logger.info(f"📊 GK {self.robot_id}: No optimization calls yet")
 
     def _calculate_ball_approach_for_kick(
         self, ball_pos: Tuple[float, float], kick_target_pos: Tuple[float, float]
