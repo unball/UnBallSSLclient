@@ -1,7 +1,6 @@
 """
 GoalkeeperOptimization/goalkeeper_optimizer.py
 
-Sistema de otimização do goleiro usando OR-Tools.
 Este módulo implementa a otimização matemática do posicionamento do goleiro
 para minimizar o risco de tomar gol.
 

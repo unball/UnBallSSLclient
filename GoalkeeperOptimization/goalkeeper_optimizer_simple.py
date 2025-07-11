@@ -4,10 +4,6 @@ RobotBehavior/goalkeeper_optimizer_simple.py
 Otimizador MINIMALISTA do goleiro para teste imediato.
 Implementa apenas o essencial: cálculo da posição ótima baseada no bisector do ângulo.
 
-INSTRUÇÕES:
-1. Salvar este arquivo como: RobotBehavior/goalkeeper_optimizer_simple.py
-2. Instalar: pip install ortools (mesmo que não use OR-Tools aqui, prepara para versão completa)
-
 Autor: UnBall Team - Universidade de Brasília
 """
 
